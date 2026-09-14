@@ -1,4 +1,3 @@
-using System.Reflection;
 using HarmonyLib;
 using LeftHandSward.Skills;
 using New_ZZZF;
@@ -24,9 +23,13 @@ namespace LeftHandSward
 
             // Do NOT touch SkillFactory here. New_ZZZF.SkillFactory static initialization
             // constructs NullSkill, and Campaign object data is not ready during module load.
+            //
+            // Do not PatchAll here. Early blanket Harmony patching of Agent methods can corrupt
+            // human animation state ("human bullet/folded-man"). We only need two lifecycle
+            // prefixes on New_ZZZF, so install exactly those methods and nothing Agent-related.
             _harmony = new Harmony(HarmonyId);
-            _harmony.PatchAll(Assembly.GetExecutingAssembly());
-            LeftHandSwardLog.Info("Lifecycle", "Harmony patches installed id=" + HarmonyId);
+            InstallNewZZZFLifecyclePatches();
+            LeftHandSwardLog.Info("Lifecycle", "Targeted Harmony lifecycle patches installed id=" + HarmonyId);
         }
 
         protected override void OnSubModuleUnloaded()
@@ -61,6 +64,42 @@ namespace LeftHandSward
             mission.AddMissionBehavior(new LeftHandAttackMissionBehavior());
         }
 
+        private void InstallNewZZZFLifecyclePatches()
+        {
+            var newGameTarget =
+                AccessTools.Method(
+                    typeof(New_ZZZF.SubModule),
+                    nameof(New_ZZZF.SubModule.OnNewGameCreated));
+            var gameLoadedTarget =
+                AccessTools.Method(
+                    typeof(New_ZZZF.SubModule),
+                    nameof(New_ZZZF.SubModule.OnGameLoaded));
+            var beforeNewGame =
+                AccessTools.Method(
+                    typeof(NewZZZFSkillRegistrationPatch),
+                    "BeforeNewGameCreated");
+            var beforeGameLoaded =
+                AccessTools.Method(
+                    typeof(NewZZZFSkillRegistrationPatch),
+                    "BeforeGameLoaded");
+
+            if (newGameTarget == null ||
+                gameLoadedTarget == null ||
+                beforeNewGame == null ||
+                beforeGameLoaded == null)
+            {
+                throw new MissingMethodException(
+                    "Unable to resolve New_ZZZF lifecycle methods for targeted Harmony patching.");
+            }
+
+            _harmony.Patch(
+                newGameTarget,
+                prefix: new HarmonyMethod(beforeNewGame));
+            _harmony.Patch(
+                gameLoadedTarget,
+                prefix: new HarmonyMethod(beforeGameLoaded));
+        }
+
         internal static void RegisterSkills()
         {
             if (_skillsRegistered)
@@ -88,19 +127,14 @@ namespace LeftHandSward
     /// safe point: Bannerlord object data is ready, while New_ZZZF has not yet executed
     /// SkillToItemObject or parsed skill IDs for this callback.
     /// </summary>
-    [HarmonyPatch]
     internal static class NewZZZFSkillRegistrationPatch
     {
-        [HarmonyPrefix]
-        [HarmonyPatch(typeof(New_ZZZF.SubModule), nameof(New_ZZZF.SubModule.OnNewGameCreated))]
         private static void BeforeNewGameCreated()
         {
             LeftHandSwardLog.Info("Lifecycle", "Prefix New_ZZZF.OnNewGameCreated");
             SubModule.RegisterSkills();
         }
 
-        [HarmonyPrefix]
-        [HarmonyPatch(typeof(New_ZZZF.SubModule), nameof(New_ZZZF.SubModule.OnGameLoaded))]
         private static void BeforeGameLoaded()
         {
             LeftHandSwardLog.Info("Lifecycle", "Prefix New_ZZZF.OnGameLoaded");
