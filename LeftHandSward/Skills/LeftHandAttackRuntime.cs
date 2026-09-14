@@ -662,25 +662,18 @@ namespace LeftHandSward.Skills
             }
 
             // The native right-hand baseline remains the combat-state entry point.
-            // QueueNativeLeftHandAttack establishes a real OffHand, forces the
-            // engine's native left stance selector, then injects MovementFlags.
-            // When Bannerlord reaches ReleaseMelee we replace only that release
-            // action with our registered actt_release_melee action whose animation
-            // clip is a clone of the vanilla left-stance release clip with
-            // use_left_hand_during_attack baked into the clip metadata.
+            // QueueNativeLeftHandAttack establishes a real OffHand and injects the
+            // normal native attack input. When Bannerlord reaches ReleaseMelee we
+            // replace only that release action with our registered actt_release_melee
+            // action whose clip carries use_left_hand_during_attack.
+            //
+            // Do not force or infer anatomical hand from "left_stance": Bannerlord's
+            // left/right stance is independent from which arm authored the motion.
             return QueueNativeLeftHandAttack(
                 agent,
                 skillId,
                 Agent.MovementControlFlag.AttackRight,
                 out result);
-        }
-
-        internal static bool ShouldForceLeftStance(Agent agent)
-        {
-            return agent != null &&
-                   agent == _leftHandRewriteAgent &&
-                   !string.IsNullOrEmpty(_leftHandRewriteSkillId) &&
-                   agent.State == AgentState.Active;
         }
 
         private static bool TryResolveLeftReleaseAction(
@@ -1220,18 +1213,6 @@ namespace LeftHandSward.Skills
                 string currentName = currentAction.GetName();
                 float progress =
                     agent.GetCurrentActionProgress(1);
-
-                if (string.IsNullOrEmpty(currentName) ||
-                    currentName.IndexOf(
-                        "_left_stance",
-                        StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    AbortNativeLeftHandRewrite(
-                        "ForceLeftStance 未让原生状态机选择 left_stance release"
-                        + " current=" + currentName,
-                        true);
-                    return;
-                }
 
                 AnimFlags beforeFlags =
                     agent.GetCurrentAnimationFlag(1);
