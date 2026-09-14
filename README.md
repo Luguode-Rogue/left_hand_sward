@@ -70,6 +70,42 @@ New_ZZZF's static `SkillFactory` constructs `NullSkill`. In Campaign:
 
 The Harmony Prefix therefore registers external skills at the same safe lifecycle point, immediately before New_ZZZF processes its registry.
 
+
+## Diagnostic log
+
+Every important left-hand experiment event is written immediately to disk:
+
+```text
+Modules/LeftHandSward/Logs/LeftHandSward.log
+```
+
+The previous session is rotated to:
+
+```text
+Modules/LeftHandSward/Logs/LeftHandSward.previous.log
+```
+
+If the module directory cannot be written, the fallback path is:
+
+```text
+Documents/Mount and Blade II Bannerlord/LeftHandSwardLogs/LeftHandSward.log
+```
+
+The log is intentionally event-based, not per-frame. It records:
+
+- skill activation ID;
+- active weapon and usage class;
+- action name, action index and raw AnimFlags;
+- action state immediately before the native call;
+- `CALL SetActionChannel BEGIN`;
+- `CALL SetActionChannel RETURN`;
+- MetaMesh copy and skeleton attach/remove native-call boundaries;
+- native `OnMeleeHit`;
+- observation timeout;
+- module / mission lifecycle.
+
+If the game raises `AccessViolationException`, send `LeftHandSward.log` from that same run without restarting the game first. The final line is especially important.
+
 ## Build
 
 Set `BANNERLORD_GAME_DIR` to the Bannerlord installation directory.
