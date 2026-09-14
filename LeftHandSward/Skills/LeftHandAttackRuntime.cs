@@ -1484,6 +1484,7 @@ namespace LeftHandSward.Skills
             blow.DamageType = usage.SwingDamageType;
             blow.StrikeType = StrikeType.Swing;
             blow.BoneIndex = boneIndex;
+            blow.VictimBodyPart = BoneBodyPartType.Chest;
             blow.BaseMagnitude = damage;
             blow.GlobalPosition = hitPoint;
             blow.DamagedPercentage = 1f;
