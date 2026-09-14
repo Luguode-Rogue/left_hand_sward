@@ -29,7 +29,7 @@ namespace LeftHandSward.Skills
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
         private static readonly List<NativeBoneAttachmentState> _nativeBoneAttachments = new List<NativeBoneAttachmentState>();
         private const string LeftReleaseActionName =
-            "act_lhs_release_slashright_1h";
+            "act_lhs_release_leftarm_1h";
         private static ActionIndexCache _leftReleaseAction =
             ActionIndexCache.act_none;
         private static bool _leftReleaseActionResolved;
@@ -1312,6 +1312,7 @@ namespace LeftHandSward.Skills
                     "CUSTOM RELEASE BEGIN"
                     + " vanilla=" + currentName
                     + " custom=" + LeftReleaseActionName
+                    + " motionDonor=NativeOffHandShieldBash"
                     + " progress=" + progress
                     + " beforeFlags=" + beforeFlags
                     + " hands={" + DescribeHands(agent) + "}");
