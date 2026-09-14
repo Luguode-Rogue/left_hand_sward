@@ -20,6 +20,7 @@ namespace LeftHandSward.Skills
 
         public override bool Activate(Agent casterAgent)
         {
+            LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
             bool ok = LeftHandAttackRuntime.AddLeftHandVisualClone(casterAgent, 4f, out string result);
             LeftHandAttackRuntime.Report(Id + " " + result);
             return ok;
