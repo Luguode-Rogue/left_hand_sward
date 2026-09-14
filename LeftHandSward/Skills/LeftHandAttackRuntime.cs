@@ -32,6 +32,7 @@ namespace LeftHandSward.Skills
             if (agent == null || agent.State != AgentState.Active)
             {
                 error = "Agent 不可用";
+                LeftHandSwardLog.Warn("Weapon", error);
                 return false;
             }
 
@@ -39,15 +40,22 @@ namespace LeftHandSward.Skills
             if (weapon.IsEmpty || weapon.Item == null || weapon.CurrentUsageItem == null)
             {
                 error = "当前没有有效武器";
+                LeftHandSwardLog.Warn("Weapon", error);
                 return false;
             }
 
             if (!weapon.CurrentUsageItem.IsMeleeWeapon)
             {
                 error = "当前武器不是近战武器";
+                LeftHandSwardLog.Warn("Weapon", error + " item=" + weapon.Item.StringId);
                 return false;
             }
 
+            LeftHandSwardLog.Info(
+                "Weapon",
+                "Active melee weapon item=" + weapon.Item.StringId
+                + " usage=" + weapon.CurrentUsageItem.WeaponClass
+                + " agent=" + SafeAgentName(agent));
             return true;
         }
 
@@ -56,6 +64,7 @@ namespace LeftHandSward.Skills
             if (agent == null)
             {
                 result = "Agent=null";
+                LeftHandSwardLog.Error("Action", result + " action=" + actionName);
                 return false;
             }
 
@@ -63,8 +72,19 @@ namespace LeftHandSward.Skills
             if (action.Index < 0)
             {
                 result = "动作不存在: " + actionName;
+                LeftHandSwardLog.Error("Action", result);
                 return false;
             }
+
+            string before = DescribeAgentAction(agent);
+            LeftHandSwardLog.Info(
+                "Action",
+                "CALL SetActionChannel BEGIN"
+                + " action=" + actionName
+                + " actionIndex=" + action.Index
+                + " flags=" + flags
+                + " flagsRaw=" + (ulong)flags
+                + " before={" + before + "}");
 
             bool accepted = agent.SetActionChannel(
                 1,
@@ -81,16 +101,24 @@ namespace LeftHandSward.Skills
                 0,
                 true);
 
+            string after = DescribeAgentAction(agent);
+            LeftHandSwardLog.Info(
+                "Action",
+                "CALL SetActionChannel RETURN"
+                + " accepted=" + accepted
+                + " action=" + actionName
+                + " after={" + after + "}");
+
             result = "SetActionChannel=" + accepted
                      + " action=" + actionName
-                     + " type=" + agent.GetCurrentActionType(1)
-                     + " stage=" + agent.GetCurrentActionStage(1)
-                     + " attackDir=" + agent.AttackDirection;
+                     + " " + after;
             return accepted;
         }
 
         public static bool AddLeftHandVisualClone(Agent agent, float lifetimeSeconds, out string result)
         {
+            LeftHandSwardLog.Info("VisualClone", "BEGIN agent=" + SafeAgentName(agent) + " lifetime=" + lifetimeSeconds);
+
             if (!TryGetActiveMeleeWeapon(agent, out MissionWeapon weapon, out string error))
             {
                 result = error;
@@ -144,6 +172,7 @@ namespace LeftHandSward.Skills
             });
 
             result = "已复制视觉模型到 l_hand: " + meshName + " bone=" + leftHandBone;
+            LeftHandSwardLog.Info("VisualClone", "SUCCESS " + result);
             return true;
         }
 
@@ -165,6 +194,7 @@ namespace LeftHandSward.Skills
 
             if (_pendingAttackSkillId != null && mission.CurrentTime > _pendingAttackUntil)
             {
+                LeftHandSwardLog.Warn("MeleeObservation", _pendingAttackSkillId + " timeout: no OnMeleeHit");
                 Report(_pendingAttackSkillId + " 观察窗口结束：未收到 OnMeleeHit");
                 _pendingAttackAgent = null;
                 _pendingAttackSkillId = null;
@@ -174,6 +204,7 @@ namespace LeftHandSward.Skills
 
         public static void Cleanup()
         {
+            LeftHandSwardLog.Info("Runtime", "Cleanup visualClones=" + _visualClones.Count + " pendingSkill=" + (_pendingAttackSkillId ?? "null"));
             for (int i = _visualClones.Count - 1; i >= 0; i--)
                 RemoveVisualCloneAt(i);
 
@@ -197,11 +228,19 @@ namespace LeftHandSward.Skills
         public static void BeginMeleeObservation(Agent agent, string skillId, float seconds = 2f)
         {
             if (agent == null || agent.Mission == null || string.IsNullOrEmpty(skillId))
+            {
+                LeftHandSwardLog.Warn("MeleeObservation", "Begin skipped skill=" + (skillId ?? "null"));
                 return;
+            }
 
             _pendingAttackAgent = agent;
             _pendingAttackSkillId = skillId;
             _pendingAttackUntil = agent.Mission.CurrentTime + Math.Max(0.25f, seconds);
+            LeftHandSwardLog.Info(
+                "MeleeObservation",
+                "Begin skill=" + skillId
+                + " until=" + _pendingAttackUntil
+                + " agent=" + SafeAgentName(agent));
         }
 
         public static void NotifyMeleeHit(
@@ -215,6 +254,15 @@ namespace LeftHandSward.Skills
 
             if (attacker != _pendingAttackAgent)
                 return;
+
+            LeftHandSwardLog.Info(
+                "MeleeHit",
+                "skill=" + _pendingAttackSkillId
+                + " canceled=" + isCanceled
+                + " dir=" + collisionData.AttackDirection
+                + " progress=" + collisionData.AttackProgress
+                + " attacker=" + SafeAgentName(attacker)
+                + " victim=" + SafeAgentName(victim));
 
             Report(
                 _pendingAttackSkillId
@@ -231,8 +279,18 @@ namespace LeftHandSward.Skills
 
         public static void Report(string message)
         {
+            LeftHandSwardLog.Info("Report", message);
             Debug.Print("[LeftHandSward] " + message);
             InformationManager.DisplayMessage(new InformationMessage("[左手攻击扩展] " + message));
+        }
+
+        public static void TraceSkillActivation(string skillId, Agent agent)
+        {
+            LeftHandSwardLog.Info(
+                "SkillActivate",
+                "skill=" + (skillId ?? "null")
+                + " agent=" + SafeAgentName(agent)
+                + " state={" + DescribeAgentAction(agent) + "}");
         }
 
         private static void RemoveVisualCloneAt(int index)
@@ -245,10 +303,47 @@ namespace LeftHandSward.Skills
             }
             catch (Exception ex)
             {
+                LeftHandSwardLog.Exception("VisualClone", ex);
                 Debug.Print("[LeftHandSward] RemoveVisualClone failed: " + ex.Message);
             }
 
             _visualClones.RemoveAt(index);
+            LeftHandSwardLog.Info("VisualClone", "Removed clone index=" + index);
+        }
+
+        private static string DescribeAgentAction(Agent agent)
+        {
+            if (agent == null)
+                return "agent=null";
+
+            try
+            {
+                return "name=" + SafeAgentName(agent)
+                       + " agentState=" + agent.State
+                       + " actionType=" + agent.GetCurrentActionType(1)
+                       + " actionStage=" + agent.GetCurrentActionStage(1)
+                       + " actionProgress=" + agent.GetCurrentActionProgress(1)
+                       + " attackDir=" + agent.AttackDirection;
+            }
+            catch (Exception ex)
+            {
+                return "describe-failed=" + ex.GetType().Name + ":" + ex.Message;
+            }
+        }
+
+        private static string SafeAgentName(Agent agent)
+        {
+            if (agent == null)
+                return "null";
+
+            try
+            {
+                return agent.Name == null ? "<unnamed>" : agent.Name.ToString();
+            }
+            catch
+            {
+                return "<name-error>";
+            }
         }
 
         private static sbyte FindBoneIndex(Skeleton skeleton, string boneName)
