@@ -14,34 +14,32 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("左手测试-左手攻击Flags");
-            Description = new TextObject("按副主动技能键 LeftAlt 独立播放右挥释放动作，并附加 stick/use-left-hand 与 left-hand IK 标志，不经过左键攻击。");
+            Text = new TextObject("左手测试-视觉+原生攻击");
+            Description = new TextObject("按 LeftAlt：先复制主手武器到 l_hand，再通过原生 MovementFlags 发起攻击。已停用会造成异常的左手 AnimFlags。");
         }
 
         public override bool Activate(Agent casterAgent)
         {
             LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
-            if (!LeftHandAttackRuntime.TryGetActiveMeleeWeapon(casterAgent, out _, out string error))
+
+            if (!LeftHandAttackRuntime.AddLeftHandVisualClone(
+                    casterAgent,
+                    2.5f,
+                    out string visualResult))
             {
-                LeftHandAttackRuntime.Report(Id + " 失败: " + error);
+                LeftHandAttackRuntime.Report(Id + " 视觉阶段失败: " + visualResult);
                 return false;
             }
 
-            AnimFlags flags = AnimFlags.anf_stick_item_to_left_hand
-                            | AnimFlags.anf_use_left_hand_during_attack
-                            | AnimFlags.anf_enable_left_hand_ik;
-
-            bool ok = LeftHandAttackRuntime.PlayAction(
+            bool attackOk = LeftHandAttackRuntime.QueueNativeAttack(
                 casterAgent,
-                "act_release_slashright_1h",
-                flags,
-                out string result);
+                Id,
+                Agent.MovementControlFlag.AttackRight,
+                out string attackResult);
 
-            if (ok)
-                LeftHandAttackRuntime.BeginMeleeObservation(casterAgent, Id);
-
-            LeftHandAttackRuntime.Report(Id + " " + result);
-            return ok;
+            LeftHandAttackRuntime.Report(
+                Id + " visual={" + visualResult + "} nativeAttack={" + attackResult + "}");
+            return attackOk;
         }
     }
 }
