@@ -140,3 +140,28 @@ agent.GetPrimaryWieldedItemIndex()
 
 This is required for crafted/composite weapons whose `ItemObject.MultiMeshName`
 can be empty even though the weapon is visibly rendered in-game.
+
+
+### Visual weapon copy
+
+Visual cloning does **not** depend on `ItemObject.MultiMeshName`.
+
+Bannerlord's `Agent.EquipWeaponWithNewEntity` passes `WeaponData` to the native
+`WeaponEquipped` callback, and the engine creates the actual equipped weapon entity.
+Some valid weapons therefore have an empty `MultiMeshName` while still rendering normally.
+
+LeftHandSward now copies the already-created live weapon entity:
+
+```text
+GetPrimaryWieldedItemIndex
+    -> Agent.GetWeaponEntityFromEquipmentSlot
+    -> recursively inspect root/child WeakGameEntity nodes
+    -> GetMetaMesh(i)
+    -> MetaMesh.CreateCopy()
+    -> flatten child local transforms into MetaMesh.Frame
+    -> Skeleton.AddComponentToBone(l_hand, copy)
+```
+
+This visual path does not require the weapon to be melee, so crafted weapons,
+javelins and other currently wielded weapon entities can also be copied for visual tests.
+
