@@ -20,6 +20,7 @@ namespace LeftHandSward.Skills
 
         public override bool Activate(Agent casterAgent)
         {
+            LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
             if (!LeftHandAttackRuntime.AddLeftHandVisualClone(casterAgent, 2.5f, out string visualResult))
             {
                 LeftHandAttackRuntime.Report(Id + " 视觉阶段失败: " + visualResult);
