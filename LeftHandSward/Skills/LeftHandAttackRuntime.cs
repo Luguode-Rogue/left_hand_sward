@@ -14,7 +14,7 @@ namespace LeftHandSward.Skills
             public Agent Agent;
             public Skeleton Skeleton;
             public sbyte BoneIndex;
-            public MetaMesh MetaMesh;
+            public List<MetaMesh> MetaMeshes;
             public float ExpireAt;
         }
 
@@ -32,7 +32,7 @@ namespace LeftHandSward.Skills
         private static string _lastObservedAttackState;
 
 
-        public static bool TryGetActiveMeleeWeapon(Agent agent, out MissionWeapon weapon, out string error)
+        public static bool TryGetActiveWeapon(Agent agent, out MissionWeapon weapon, out string error)
         {
             weapon = MissionWeapon.Invalid;
             error = null;
@@ -52,6 +52,22 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
+            LeftHandSwardLog.Info(
+                "Weapon",
+                "Active weapon item=" + weapon.Item.StringId
+                + " usage=" + weapon.CurrentUsageItem.WeaponClass
+                + " melee=" + weapon.CurrentUsageItem.IsMeleeWeapon
+                + " ranged=" + weapon.CurrentUsageItem.IsRangedWeapon
+                + " agent=" + SafeAgentName(agent)
+                + " hands={" + DescribeHands(agent) + "}");
+            return true;
+        }
+
+        public static bool TryGetActiveMeleeWeapon(Agent agent, out MissionWeapon weapon, out string error)
+        {
+            if (!TryGetActiveWeapon(agent, out weapon, out error))
+                return false;
+
             if (!weapon.CurrentUsageItem.IsMeleeWeapon)
             {
                 error = "当前主手武器不是近战武器";
@@ -59,12 +75,6 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            LeftHandSwardLog.Info(
-                "Weapon",
-                "Active melee weapon item=" + weapon.Item.StringId
-                + " usage=" + weapon.CurrentUsageItem.WeaponClass
-                + " agent=" + SafeAgentName(agent)
-                + " hands={" + DescribeHands(agent) + "}");
             return true;
         }
 
@@ -158,7 +168,7 @@ namespace LeftHandSward.Skills
                 "VisualClone",
                 "BEGIN agent=" + SafeAgentName(agent) + " lifetime=" + lifetimeSeconds);
 
-            if (!TryGetActiveMeleeWeapon(agent, out MissionWeapon weapon, out string error))
+            if (!TryGetActiveWeapon(agent, out MissionWeapon weapon, out string error))
             {
                 result = error;
                 return false;
@@ -171,10 +181,18 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            string meshName = weapon.Item.MultiMeshName;
-            if (string.IsNullOrEmpty(meshName))
+            EquipmentIndex sourceSlot = agent.GetPrimaryWieldedItemIndex();
+            if (sourceSlot == EquipmentIndex.None)
             {
-                result = "当前物品没有 MultiMeshName";
+                result = "找不到当前主手装备槽";
+                LeftHandSwardLog.Warn("VisualClone", result);
+                return false;
+            }
+
+            WeakGameEntity weaponEntity = agent.GetWeaponEntityFromEquipmentSlot(sourceSlot);
+            if (!weaponEntity.IsValid)
+            {
+                result = "当前装备槽没有有效 weapon entity: " + sourceSlot;
                 LeftHandSwardLog.Warn("VisualClone", result);
                 return false;
             }
@@ -197,38 +215,47 @@ namespace LeftHandSward.Skills
 
             RemoveVisualClone(agent);
 
-            LeftHandSwardLog.Info("VisualClone", "CALL MetaMesh.GetCopy BEGIN mesh=" + meshName);
-            MetaMesh clone = MetaMesh.GetCopy(meshName, false, true);
+            List<MetaMesh> clones = new List<MetaMesh>();
+            MatrixFrame rootFrame = MatrixFrame.Identity;
+
             LeftHandSwardLog.Info(
                 "VisualClone",
-                "CALL MetaMesh.GetCopy RETURN clone=" + (clone == null ? "null" : "non-null")
-                + " valid=" + (clone != null && clone.IsValid));
+                "SOURCE entity=" + weaponEntity.Name
+                + " slot=" + sourceSlot
+                + " rootMetaMeshes=" + weaponEntity.MultiMeshComponentCount
+                + " rootChildren=" + weaponEntity.ChildCount
+                + " item=" + weapon.Item.StringId
+                + " usage=" + weapon.CurrentUsageItem.WeaponClass);
 
-            if (clone == null || !clone.IsValid)
+            CopyWeaponEntityVisualsRecursive(
+                weaponEntity,
+                rootFrame,
+                skeleton,
+                leftHandBone,
+                clones,
+                0);
+
+            if (clones.Count == 0)
             {
-                result = "无法复制武器 MetaMesh: " + meshName;
+                result = "weapon entity 中没有可复制的 MetaMesh";
+                LeftHandSwardLog.Warn("VisualClone", result);
                 return false;
             }
-
-            LeftHandSwardLog.Info(
-                "VisualClone",
-                "CALL Skeleton.AddComponentToBone BEGIN bone=" + leftHandBone + " mesh=" + meshName);
-            skeleton.AddComponentToBone(leftHandBone, clone);
-            LeftHandSwardLog.Info(
-                "VisualClone",
-                "CALL Skeleton.AddComponentToBone RETURN bone=" + leftHandBone + " mesh=" + meshName);
 
             _visualClones.Add(new VisualCloneState
             {
                 Agent = agent,
                 Skeleton = skeleton,
                 BoneIndex = leftHandBone,
-                MetaMesh = clone,
+                MetaMeshes = clones,
                 ExpireAt = (agent.Mission != null ? agent.Mission.CurrentTime : 0f)
                            + Math.Max(0.25f, lifetimeSeconds)
             });
 
-            result = "已复制视觉模型到 l_hand: " + meshName + " bone=" + leftHandBone;
+            result = "已从运行时 weapon entity 复制到 l_hand"
+                     + " slot=" + sourceSlot
+                     + " meshes=" + clones.Count
+                     + " item=" + weapon.Item.StringId;
             LeftHandSwardLog.Info("VisualClone", "SUCCESS " + result);
             return true;
         }
@@ -398,15 +425,28 @@ namespace LeftHandSward.Skills
 
             try
             {
-                if (state.Skeleton != null && state.MetaMesh != null && state.MetaMesh.IsValid)
+                if (state.Skeleton != null && state.MetaMeshes != null)
                 {
-                    LeftHandSwardLog.Info(
-                        "VisualClone",
-                        "CALL Skeleton.RemoveBoneComponent BEGIN bone=" + state.BoneIndex);
-                    state.Skeleton.RemoveBoneComponent(state.BoneIndex, state.MetaMesh);
-                    LeftHandSwardLog.Info(
-                        "VisualClone",
-                        "CALL Skeleton.RemoveBoneComponent RETURN bone=" + state.BoneIndex);
+                    for (int i = 0; i < state.MetaMeshes.Count; i++)
+                    {
+                        MetaMesh metaMesh = state.MetaMeshes[i];
+                        if (metaMesh == null || !metaMesh.IsValid)
+                            continue;
+
+                        LeftHandSwardLog.Info(
+                            "VisualClone",
+                            "CALL Skeleton.RemoveBoneComponent BEGIN"
+                            + " bone=" + state.BoneIndex
+                            + " meshIndex=" + i);
+
+                        state.Skeleton.RemoveBoneComponent(state.BoneIndex, metaMesh);
+
+                        LeftHandSwardLog.Info(
+                            "VisualClone",
+                            "CALL Skeleton.RemoveBoneComponent RETURN"
+                            + " bone=" + state.BoneIndex
+                            + " meshIndex=" + i);
+                    }
                 }
             }
             catch (Exception ex)
@@ -416,6 +456,88 @@ namespace LeftHandSward.Skills
 
             _visualClones.RemoveAt(index);
             LeftHandSwardLog.Info("VisualClone", "Removed clone index=" + index);
+        }
+
+        private static void CopyWeaponEntityVisualsRecursive(
+            WeakGameEntity entity,
+            MatrixFrame parentRelativeFrame,
+            Skeleton skeleton,
+            sbyte leftHandBone,
+            List<MetaMesh> clones,
+            int depth)
+        {
+            if (!entity.IsValid)
+                return;
+
+            MatrixFrame entityRelativeFrame =
+                parentRelativeFrame.TransformToParent(entity.GetLocalFrame());
+
+            int metaMeshCount = entity.MultiMeshComponentCount;
+            LeftHandSwardLog.Info(
+                "VisualClone",
+                "ENTITY depth=" + depth
+                + " name=" + entity.Name
+                + " metaMeshes=" + metaMeshCount
+                + " children=" + entity.ChildCount);
+
+            for (int i = 0; i < metaMeshCount; i++)
+            {
+                MetaMesh source = entity.GetMetaMesh(i);
+                if (source == null || !source.IsValid)
+                    continue;
+
+                LeftHandSwardLog.Info(
+                    "VisualClone",
+                    "CALL MetaMesh.CreateCopy BEGIN"
+                    + " depth=" + depth
+                    + " index=" + i
+                    + " name=" + source.GetName());
+
+                MetaMesh clone = source.CreateCopy();
+
+                LeftHandSwardLog.Info(
+                    "VisualClone",
+                    "CALL MetaMesh.CreateCopy RETURN"
+                    + " depth=" + depth
+                    + " index=" + i
+                    + " valid=" + (clone != null && clone.IsValid));
+
+                if (clone == null || !clone.IsValid)
+                    continue;
+
+                // Rebuild the runtime weapon entity's local transform chain on the
+                // copied MetaMesh before attaching it to the left-hand bone.
+                clone.Frame = entityRelativeFrame.TransformToParent(source.Frame);
+
+                LeftHandSwardLog.Info(
+                    "VisualClone",
+                    "CALL Skeleton.AddComponentToBone BEGIN"
+                    + " bone=" + leftHandBone
+                    + " depth=" + depth
+                    + " index=" + i);
+
+                skeleton.AddComponentToBone(leftHandBone, clone);
+
+                LeftHandSwardLog.Info(
+                    "VisualClone",
+                    "CALL Skeleton.AddComponentToBone RETURN"
+                    + " bone=" + leftHandBone
+                    + " depth=" + depth
+                    + " index=" + i);
+
+                clones.Add(clone);
+            }
+
+            for (int i = 0; i < entity.ChildCount; i++)
+            {
+                CopyWeaponEntityVisualsRecursive(
+                    entity.GetChild(i),
+                    entityRelativeFrame,
+                    skeleton,
+                    leftHandBone,
+                    clones,
+                    depth + 1);
+            }
         }
 
         private static string DescribeAttackObservationState(Agent agent)
