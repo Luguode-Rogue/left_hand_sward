@@ -68,6 +68,21 @@ namespace LeftHandSward
             }
 
             LeftHandAttackRuntime.RemoveVisualClone(affectedAgent);
+            LeftHandAttackRuntime.RemoveTemporaryOffhand(affectedAgent);
+        }
+
+        protected override void OnEndMission()
+        {
+            LeftHandSwardLog.Info("Mission", "OnEndMission cleanup");
+            LeftHandAttackRuntime.Cleanup();
+            base.OnEndMission();
+        }
+
+        public override void OnRemoveBehavior()
+        {
+            LeftHandSwardLog.Info("Mission", "OnRemoveBehavior cleanup");
+            LeftHandAttackRuntime.Cleanup();
+            base.OnRemoveBehavior();
         }
     }
 }
