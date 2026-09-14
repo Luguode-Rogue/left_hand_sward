@@ -11,11 +11,11 @@ namespace LeftHandSward.Skills
         public VisualCloneAndAttackSkill()
         {
             SkillID = Id;
-            Type = SPSkillType.MainActive;
+            Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
             Text = new TextObject("左手测试-视觉+左手攻击");
-            Description = new TextObject("按主主动技能键 E：先把右手武器视觉复制到左手，再用 left_stance + 左手相关 flags 独立发动攻击。");
+            Description = new TextObject("按副主动技能键 LeftAlt：先把右手武器视觉复制到左手，再用 left_stance + 左手相关 flags 独立发动攻击。");
         }
 
         public override bool Activate(Agent casterAgent)
