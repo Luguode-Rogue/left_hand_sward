@@ -16,17 +16,6 @@ internal static class Program
         "act_shield_bash"
     };
 
-    private static readonly string[] PreferredCombatTemplateActions =
-    {
-        // Runtime logs show the native state machine normally reaches a quick
-        // one-handed right slash before we replace ReleaseMelee. Keep that clip's
-        // combat timing/parameters and swap only the referenced skeletal motion.
-        "act_quick_release_slashright_1h",
-        "act_quick_release_slashright_1h_left_stance",
-        "act_release_slashright_1h",
-        "act_release_slashright_1h_left_stance"
-    };
-
     private const string OutputClip =
         "lhs_release_left_arm_bash_clip";
     private const string LeftColliderFlag =
@@ -94,20 +83,14 @@ internal static class Program
                     + sourceClip
                     + " (action=" + sourceAction + ")");
 
-            (string templateAction, string templateClip) =
-                ResolvePreferredAction(actionSets, PreferredCombatTemplateActions, "one-handed ReleaseMelee combat template");
-
-            ClipRecord template = FindClip(game, templateClip)
-                ?? throw new InvalidOperationException(
-                    "AnimationClip not found in Native TPACs: "
-                    + templateClip
-                    + " (action=" + templateAction + ")");
-
+            // Keep the entire native OffHand shield-bash clip coherent.
+            // The previous hybrid experiment replaced only the Animation GUID inside
+            // a right-hand sword clip. Runtime proved that this silently fell back to
+            // the right-hand collision path (attackBone=r_finger0) and visually lost
+            // the left-arm motion. Do not mix clip metadata/segments across actions.
             Guid donorAnimation = ReadAnimationGuid(source.Metadata);
-            byte[] hybridMetadata =
-                ReplaceAnimationGuid(template.Metadata, donorAnimation);
             byte[] patchedMetadata =
-                AddFlag(hybridMetadata, LeftColliderFlag);
+                AddFlag(source.Metadata, LeftColliderFlag);
 
             string donorReport = Path.Combine(
                 outputDirectory,
@@ -118,28 +101,24 @@ internal static class Program
                 + "motionSourceClip=" + sourceClip + Environment.NewLine
                 + "motionSourcePackage=" + source.SourcePackage + Environment.NewLine
                 + "motionAnimationGuid=" + donorAnimation + Environment.NewLine
-                + "combatTemplateAction=" + templateAction + Environment.NewLine
-                + "combatTemplateClip=" + templateClip + Environment.NewLine
-                + "combatTemplatePackage=" + template.SourcePackage + Environment.NewLine
+                + "mode=full-native-offhand-clip" + Environment.NewLine
                 + "outputClip=" + OutputClip + Environment.NewLine
                 + "colliderFlag=" + LeftColliderFlag + Environment.NewLine,
                 Encoding.UTF8);
 
             WriteSingleClipPackage(
                 output,
-                template.PackageVersion,
-                template.AssetVersion,
+                source.PackageVersion,
+                source.AssetVersion,
                 patchedMetadata,
                 source.Dependencies,
                 source.DependencyCount,
-                template.Segments);
+                source.Segments);
 
             Console.WriteLine(
-                "[LeftHandClipBuilder] HYBRID"
+                "[LeftHandClipBuilder] FULL OFFHAND CLIP"
                 + " motionAction=" + sourceAction
                 + " motionClip=" + sourceClip
-                + " templateAction=" + templateAction
-                + " templateClip=" + templateClip
                 + " outputClip=" + OutputClip
                 + " output=" + output);
             return 0;
@@ -514,22 +493,6 @@ internal static class Program
         byte[] bytes = new byte[16];
         Buffer.BlockCopy(metadata, AnimationGuidOffset, bytes, 0, 16);
         return new Guid(bytes);
-    }
-
-    private static byte[] ReplaceAnimationGuid(
-        byte[] metadata,
-        Guid animationGuid)
-    {
-        const int AnimationGuidOffset =
-            sizeof(uint) + 6 * sizeof(float) + sizeof(int);
-
-        if (metadata.Length < AnimationGuidOffset + 16)
-            throw new InvalidDataException("AnimationClip metadata is too short for animation guid");
-
-        byte[] result = (byte[])metadata.Clone();
-        byte[] guid = animationGuid.ToByteArray();
-        Buffer.BlockCopy(guid, 0, result, AnimationGuidOffset, 16);
-        return result;
     }
 
     private static byte[] AddFlag(
