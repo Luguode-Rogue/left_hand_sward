@@ -10,10 +10,19 @@ internal static class Program
     private static readonly Guid OutputAssetGuid =
         new("df24ae53-2ac7-4fa5-88b7-4ee0a6e7f9cc");
 
-    private const string SourceAction =
-        "act_release_slashright_1h_left_stance";
+    private static readonly string[] PreferredLeftArmSourceActions =
+    {
+        // Centre-grip shield bash is the best donor for a sword in the left hand:
+        // the shield itself is an OffHand item and the motion is authored on the
+        // anatomical left arm/hand.
+        "act_hand_shield_bash",
+
+        // Standard strapped-shield bash is still an explicit OffHand left-arm motion.
+        "act_shield_bash"
+    };
+
     private const string OutputClip =
-        "lhs_release_slashright_1h_left_stance_clip";
+        "lhs_release_left_arm_bash_clip";
     private const string LeftColliderFlag =
         "use_left_hand_during_attack";
 
@@ -70,10 +79,14 @@ internal static class Program
                 "left_hand_native_candidates.txt");
             WriteNativeCandidateReport(actionSets, actionTypes, candidateReport);
 
-            string sourceClip = ResolveAnimationName(actionSets, SourceAction);
+            (string sourceAction, string sourceClip) =
+                ResolvePreferredLeftArmAnimation(actionSets);
+
             ClipRecord source = FindClip(game, sourceClip)
                 ?? throw new InvalidOperationException(
-                    "AnimationClip not found in Native TPACs: " + sourceClip);
+                    "AnimationClip not found in Native TPACs: "
+                    + sourceClip
+                    + " (action=" + sourceAction + ")");
 
             byte[] patchedMetadata =
                 AddFlag(source.Metadata, LeftColliderFlag);
@@ -88,7 +101,7 @@ internal static class Program
                 source.Segments);
 
             Console.WriteLine(
-                "[LeftHandClipBuilder] sourceAction=" + SourceAction
+                "[LeftHandClipBuilder] sourceAction=" + sourceAction
                 + " sourceClip=" + sourceClip
                 + " sourcePackage=" + source.SourcePackage
                 + " sourceSegments=" + source.Segments.Count
@@ -208,9 +221,8 @@ internal static class Program
         }
     }
 
-    private static string ResolveAnimationName(
-        string actionSetsPath,
-        string actionName)
+    private static (string Action, string Animation)
+        ResolvePreferredLeftArmAnimation(string actionSetsPath)
     {
         XDocument doc = XDocument.Load(actionSetsPath);
         XElement? warrior = doc
@@ -221,22 +233,41 @@ internal static class Program
                     "as_human_warrior",
                     StringComparison.Ordinal));
 
-        XElement? action = warrior?
-            .Elements("action")
-            .FirstOrDefault(x =>
-                string.Equals(
-                    (string?)x.Attribute("type"),
-                    actionName,
-                    StringComparison.Ordinal));
-
-        string? animation =
-            (string?)action?.Attribute("animation");
-
-        if (string.IsNullOrWhiteSpace(animation))
+        if (warrior == null)
+        {
             throw new InvalidOperationException(
-                "Native action mapping not found: " + actionName);
+                "Native action set not found: as_human_warrior");
+        }
 
-        return animation;
+        foreach (string actionName in PreferredLeftArmSourceActions)
+        {
+            XElement? action = warrior
+                .Elements("action")
+                .FirstOrDefault(x =>
+                    string.Equals(
+                        (string?)x.Attribute("type"),
+                        actionName,
+                        StringComparison.Ordinal));
+
+            string? animation =
+                (string?)action?.Attribute("animation");
+
+            if (!string.IsNullOrWhiteSpace(animation))
+            {
+                Console.WriteLine(
+                    "[LeftHandClipBuilder] selected left-arm donor"
+                    + " action=" + actionName
+                    + " animation=" + animation);
+
+                return (actionName, animation);
+            }
+        }
+
+        throw new InvalidOperationException(
+            "No explicit OffHand shield-bash animation was found in "
+            + "Native/as_human_warrior. Expected one of: "
+            + string.Join(", ", PreferredLeftArmSourceActions)
+            + ". Refusing to fall back to a right-hand animation.");
     }
 
     private static ClipRecord? FindClip(
