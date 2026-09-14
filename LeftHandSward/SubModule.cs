@@ -19,14 +19,19 @@ namespace LeftHandSward
         {
             base.OnSubModuleLoad();
 
+            LeftHandSwardLog.Initialize();
+            LeftHandSwardLog.Info("Lifecycle", "OnSubModuleLoad BEGIN log=" + LeftHandSwardLog.LogPath);
+
             // Do NOT touch SkillFactory here. New_ZZZF.SkillFactory static initialization
             // constructs NullSkill, and Campaign object data is not ready during module load.
             _harmony = new Harmony(HarmonyId);
             _harmony.PatchAll(Assembly.GetExecutingAssembly());
+            LeftHandSwardLog.Info("Lifecycle", "Harmony patches installed id=" + HarmonyId);
         }
 
         protected override void OnSubModuleUnloaded()
         {
+            LeftHandSwardLog.Info("Lifecycle", "OnSubModuleUnloaded");
             _harmony?.UnpatchSelf();
             _harmony = null;
             base.OnSubModuleUnloaded();
@@ -35,6 +40,7 @@ namespace LeftHandSward
         protected override void OnGameStart(Game game, IGameStarter gameStarterObject)
         {
             base.OnGameStart(game, gameStarterObject);
+            LeftHandSwardLog.Info("Lifecycle", "OnGameStart gameType=" + (game?.GameType == null ? "null" : game.GameType.GetType().FullName));
 
             // Campaign initialization is still too early here: DefaultItemCategories can be null.
             // Campaign skills are registered by Harmony prefixes immediately before New_ZZZF
@@ -49,13 +55,19 @@ namespace LeftHandSward
         public override void OnMissionBehaviorInitialize(Mission mission)
         {
             base.OnMissionBehaviorInitialize(mission);
+            LeftHandSwardLog.Info("Lifecycle", "OnMissionBehaviorInitialize mission=" + (mission == null ? "null" : mission.GetType().FullName));
             mission.AddMissionBehavior(new LeftHandAttackMissionBehavior());
         }
 
         internal static void RegisterSkills()
         {
             if (_skillsRegistered)
+            {
+                LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills skipped: already registered");
                 return;
+            }
+
+            LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills BEGIN");
 
             // Set this only after SkillFactory has initialized successfully.
             SkillFactory.RegisterSkill(NativeRightBaselineSkill.Id, new NativeRightBaselineSkill());
@@ -66,6 +78,7 @@ namespace LeftHandSward
             SkillFactory.RegisterSkill(VisualCloneAndAttackSkill.Id, new VisualCloneAndAttackSkill());
 
             _skillsRegistered = true;
+            LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills SUCCESS count=6");
             Debug.Print("[LeftHandSward] Registered 6 New_ZZZF extension skills.");
         }
     }
@@ -82,6 +95,7 @@ namespace LeftHandSward
         [HarmonyPatch(typeof(New_ZZZF.SubModule), nameof(New_ZZZF.SubModule.OnNewGameCreated))]
         private static void BeforeNewGameCreated()
         {
+            LeftHandSwardLog.Info("Lifecycle", "Prefix New_ZZZF.OnNewGameCreated");
             SubModule.RegisterSkills();
         }
 
@@ -89,6 +103,7 @@ namespace LeftHandSward
         [HarmonyPatch(typeof(New_ZZZF.SubModule), nameof(New_ZZZF.SubModule.OnGameLoaded))]
         private static void BeforeGameLoaded()
         {
+            LeftHandSwardLog.Info("Lifecycle", "Prefix New_ZZZF.OnGameLoaded");
             SubModule.RegisterSkills();
         }
     }
