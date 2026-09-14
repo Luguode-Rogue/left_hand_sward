@@ -1209,7 +1209,7 @@ namespace LeftHandSward.Skills
                     1,
                     _leftReleaseAction,
                     true,
-                    AnimFlags.None,
+                    (AnimFlags)0UL,
                     0f,
                     1f,
                     0f,
