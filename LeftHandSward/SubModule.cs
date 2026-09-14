@@ -1,5 +1,6 @@
 using LeftHandSward.Skills;
 using New_ZZZF;
+using TaleWorlds.Core;
 using TaleWorlds.Library;
 using TaleWorlds.MountAndBlade;
 
@@ -12,6 +13,16 @@ namespace LeftHandSward
         protected override void OnSubModuleLoad()
         {
             base.OnSubModuleLoad();
+        }
+
+        protected override void OnGameStart(Game game, IGameStarter gameStarterObject)
+        {
+            base.OnGameStart(game, gameStarterObject);
+
+            // SkillFactory's static registry constructs NullSkill instances.
+            // New_ZZZF.NullSkill reads Game.Current, which is not available during OnSubModuleLoad.
+            // Register here: Game.Current is initialized, while New_ZZZF has not yet run
+            // SkillToItemObject() from OnNewGameCreated / OnGameLoaded.
             RegisterSkills();
         }
 
