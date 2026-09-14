@@ -552,6 +552,27 @@ namespace LeftHandSward.Skills
             return true;
         }
 
+        // Compatibility shim for stale local copies of the retired
+        // OffHandNativeAttackSkill.cs. The old skill is no longer registered, but
+        // keeping this method lets existing working trees compile cleanly until the
+        // deleted source file is removed by a fresh pull/clean.
+        [Obsolete("Use QueueNativeLeftHandAttack instead.")]
+        public static bool QueueOffHandNativeAttack(
+            Agent agent,
+            string skillId,
+            Agent.MovementControlFlag attackFlag,
+            out string result)
+        {
+            LeftHandSwardLog.Warn(
+                "Compatibility",
+                "QueueOffHandNativeAttack called by stale source; forwarding to QueueNativeLeftHandAttack");
+            return QueueNativeLeftHandAttack(
+                agent,
+                skillId,
+                attackFlag,
+                out result);
+        }
+
         public static bool QueueNativeLeftHandAttack(
             Agent agent,
             string skillId,
