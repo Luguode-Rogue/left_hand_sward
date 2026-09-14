@@ -842,6 +842,12 @@ namespace LeftHandSward.Skills
             {
                 agent.SetActionSet(ref leftAnimationData);
                 agent.UpdateWeapons();
+
+                LeftHandSwardLog.Info(
+                    "LeftHandNativeMirror",
+                    "SET ACTION SYSTEM RETURN"
+                    + " actionSet=" + agent.ActionSet.GetName()
+                    + " hands={" + DescribeHands(agent) + "}");
             }
             catch (Exception ex)
             {
@@ -1519,39 +1525,118 @@ namespace LeftHandSward.Skills
             if (agent == null ||
                 script == null ||
                 agent.State != AgentState.Active ||
-                mission.MainAgent != agent ||
-                _postIntegrateWeaponSlot == EquipmentIndex.None)
+                mission.MainAgent != agent)
             {
+                return;
+            }
+
+            CustomLeftHandAttackState active =
+                _customLeftHandAttack;
+
+            if (active != null &&
+                active.Agent == agent &&
+                script.MirrorActive)
+            {
+                if (agent.GetPrimaryWieldedItemIndex() !=
+                    active.SourceSlot)
+                {
+                    EndCustomLeftHandAttack(
+                        "primary weapon changed during left attack");
+                    return;
+                }
+
+                WeakGameEntity activeWeapon =
+                    agent.GetWeaponEntityFromEquipmentSlot(
+                        active.SourceSlot);
+
+                if (activeWeapon.IsValid &&
+                    script.HasLeftItemFrame)
+                {
+                    MatrixFrame frame =
+                        script.LastLeftItemFrame.TransformToParent(
+                            active.LeftWeaponOffset);
+                    activeWeapon.SetFrame(ref frame, false);
+                }
+                return;
+            }
+
+            if (script.MirrorActive ||
+                !script.HasRightItemFrame)
+            {
+                return;
+            }
+
+            EquipmentIndex currentPrimary =
+                agent.GetPrimaryWieldedItemIndex();
+
+            if (currentPrimary == EquipmentIndex.None)
+            {
+                _postIntegrateWeaponSlot = EquipmentIndex.None;
+                _postIntegrateRightWeaponOffsetValid = false;
                 return;
             }
 
             WeakGameEntity weaponEntity =
                 agent.GetWeaponEntityFromEquipmentSlot(
-                    _postIntegrateWeaponSlot);
+                    currentPrimary);
             if (!weaponEntity.IsValid)
                 return;
 
-            if (_customLeftHandAttack != null &&
-                _customLeftHandAttack.Agent == agent &&
-                script.MirrorActive &&
-                script.HasLeftItemFrame)
+            if (currentPrimary != _postIntegrateWeaponSlot ||
+                !_postIntegrateRightWeaponOffsetValid)
             {
-                MatrixFrame frame =
-                    script.LastLeftItemFrame.TransformToParent(
-                        _customLeftHandAttack.LeftWeaponOffset);
-                weaponEntity.SetFrame(ref frame, false);
-                return;
+                // Enabling the script-driven post-integrate callback can stop
+                // Bannerlord's normal weapon-entity follow update. A wield switch
+                // still gives us a native weapon entity; ask native UpdateWeapons
+                // to establish it once, then capture the local grip offset using
+                // the FINAL right item-bone frame from AnimResult.
+                agent.UpdateWeapons();
+
+                MatrixFrame currentWeaponFrame =
+                    weaponEntity.GetFrame();
+                MatrixFrame candidateOffset =
+                    script.LastRightItemFrame.TransformToLocal(
+                        currentWeaponFrame);
+
+                if (candidateOffset.origin.Length <= 0.35f)
+                {
+                    _postIntegrateWeaponSlot =
+                        currentPrimary;
+                    _postIntegrateRightWeaponOffset =
+                        candidateOffset;
+                    _postIntegrateRightWeaponOffsetValid =
+                        true;
+
+                    LeftHandSwardLog.Info(
+                        "LeftHandNativeMirror",
+                        "RIGHT GRIP RECAPTURE"
+                        + " slot=" + currentPrimary
+                        + " offset={"
+                        + DescribeFrame(candidateOffset)
+                        + "}");
+                }
+                else
+                {
+                    _postIntegrateWeaponSlot =
+                        currentPrimary;
+                    _postIntegrateRightWeaponOffsetValid =
+                        false;
+
+                    LeftHandSwardLog.Warn(
+                        "LeftHandNativeMirror",
+                        "RIGHT GRIP RECAPTURE rejected"
+                        + " slot=" + currentPrimary
+                        + " offset={"
+                        + DescribeFrame(candidateOffset)
+                        + "}");
+                    return;
+                }
             }
 
-            if (!script.MirrorActive &&
-                script.HasRightItemFrame &&
-                _postIntegrateRightWeaponOffsetValid)
-            {
-                MatrixFrame frame =
-                    script.LastRightItemFrame.TransformToParent(
-                        _postIntegrateRightWeaponOffset);
-                weaponEntity.SetFrame(ref frame, true);
-            }
+            MatrixFrame rightFrame =
+                script.LastRightItemFrame.TransformToParent(
+                    _postIntegrateRightWeaponOffset);
+            weaponEntity.SetFrame(ref rightFrame, true);
         }
 
         private static void TickCustomLeftHandAttack(Mission mission)
@@ -1575,6 +1660,14 @@ namespace LeftHandSward.Skills
                     state.SawNativeMelee
                         ? "native melee timeout"
                         : "native melee never started");
+                return;
+            }
+
+            if (agent.GetPrimaryWieldedItemIndex() !=
+                state.SourceSlot)
+            {
+                EndCustomLeftHandAttack(
+                    "primary weapon changed during native attack");
                 return;
             }
 
