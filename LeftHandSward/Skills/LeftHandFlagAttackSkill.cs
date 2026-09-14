@@ -20,6 +20,7 @@ namespace LeftHandSward.Skills
 
         public override bool Activate(Agent casterAgent)
         {
+            LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
             if (!LeftHandAttackRuntime.TryGetActiveMeleeWeapon(casterAgent, out _, out string error))
             {
                 LeftHandAttackRuntime.Report(Id + " 失败: " + error);
