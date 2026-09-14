@@ -5,7 +5,7 @@
     skeleton="human_skeleton"
     movement_system="bipedal">
     <action
-      type="act_lhs_release_slashright_1h"
+      type="act_lhs_release_leftarm_1h"
       animation="lhs_release_left_arm_bash_clip" />
   </action_set>
 </action_sets>
