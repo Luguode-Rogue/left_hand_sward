@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("实验4-自定义左手攻击原型");
-            Description = new TextObject("不再使用 native OffHand，也不触发右手攻击。复用已验证的左手挂点显示当前武器，用左手前方自定义 sweep 检测并通过 Blow 造成伤害。");
+            Text = new TextObject("实验4-程序IK左手挥砍");
+            Description = new TextObject("要求另一个装备槽有单手近战武器。不播放任何伪左手攻击动作；直接驱动左手IK目标完成挥砍，左手武器来自独立装备槽，碰撞和Blow也使用该左手武器。");
         }
 
         public override bool Activate(Agent casterAgent)

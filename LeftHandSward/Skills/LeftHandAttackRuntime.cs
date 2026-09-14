@@ -32,11 +32,19 @@ namespace LeftHandSward.Skills
             public MissionWeapon Weapon;
             public EquipmentIndex SourceSlot;
             public string SkillId;
+            public Skeleton Skeleton;
+            public sbyte LeftHandBone;
+            public sbyte RightHandBone;
+            public sbyte LeftItemBone;
+            public sbyte LeftShoulderBone;
+            public MatrixFrame RestLeftHandWorld;
+            public MatrixFrame RestRightHandWorld;
             public float StartedAt;
-            public float SweepStartAt;
-            public float SweepEndAt;
-            public bool HasPreviousTip;
-            public Vec3 PreviousTip;
+            public float AttackEndAt;
+            public bool IkResultLogged;
+            public bool HasPreviousBlade;
+            public Vec3 PreviousBladeBase;
+            public Vec3 PreviousBladeTip;
             public bool HitRegistered;
         }
 
@@ -460,6 +468,78 @@ namespace LeftHandSward.Skills
             return true;
         }
 
+        private static bool AttachWeaponToLeftItemBone(
+            Agent agent,
+            MissionWeapon weapon,
+            float lifetimeSeconds,
+            out string result)
+        {
+            if (agent == null ||
+                agent.State != AgentState.Active ||
+                agent.AgentVisuals == null ||
+                agent.Monster == null)
+            {
+                result = "Agent/AgentVisuals/Monster 不可用";
+                return false;
+            }
+
+            if (weapon.IsEmpty || weapon.Item == null || weapon.CurrentUsageItem == null)
+            {
+                result = "左手 MissionWeapon 无效";
+                return false;
+            }
+
+            sbyte leftItemBone = agent.Monster.OffHandItemBoneIndex;
+            if (leftItemBone < 0)
+            {
+                result = "Monster.OffHandItemBoneIndex 无效";
+                return false;
+            }
+
+            RemoveNativeBoneAttachment(agent);
+
+            MatrixFrame identity = MatrixFrame.Identity;
+            int beforeCount = agent.GetAttachedWeaponsCount();
+
+            LeftHandSwardLog.Info(
+                "NativeBoneAttach",
+                "CALL Agent.AttachWeaponToBone BEGIN"
+                + " beforeCount=" + beforeCount
+                + " bone=" + leftItemBone
+                + " item=" + weapon.Item.StringId);
+
+            agent.AttachWeaponToBone(
+                weapon,
+                null,
+                leftItemBone,
+                ref identity);
+
+            int afterCount = agent.GetAttachedWeaponsCount();
+
+            LeftHandSwardLog.Info(
+                "NativeBoneAttach",
+                "CALL Agent.AttachWeaponToBone RETURN"
+                + " afterCount=" + afterCount);
+
+            if (afterCount <= beforeCount)
+            {
+                result = "AttachWeaponToBone 返回后 attached weapon 数量未增加";
+                return false;
+            }
+
+            _nativeBoneAttachments.Add(new NativeBoneAttachmentState
+            {
+                Agent = agent,
+                AttachedWeaponIndex = beforeCount,
+                BoneIndex = leftItemBone,
+                ExpireAt = (agent.Mission != null ? agent.Mission.CurrentTime : 0f)
+                           + Math.Max(0.25f, lifetimeSeconds)
+            });
+
+            result = "左手武器已挂到 OffHandItemBone";
+            return true;
+        }
+
         public static bool EstablishOffHandStateFromExistingWeapon(
             Agent agent,
             out string result)
@@ -593,111 +673,131 @@ namespace LeftHandSward.Skills
             string skillId,
             out string result)
         {
-            if (!TryGetActiveMeleeWeapon(agent, out MissionWeapon weapon, out string error))
+            if (agent == null || agent.State != AgentState.Active)
             {
-                result = error;
+                result = "Agent 不可用";
                 return false;
             }
 
             if (agent.Mission == null || agent.Mission.MainAgent != agent)
             {
                 result = "左手攻击目前只支持 MainAgent";
-                LeftHandSwardLog.Warn("LeftHandCustom", result);
                 return false;
             }
 
             if (_customLeftHandAttack != null)
             {
                 result = "上一轮左手攻击尚未结束";
-                LeftHandSwardLog.Warn("LeftHandCustom", result);
                 return false;
             }
 
-            // The native OffHand route is retired. Do not let a stale experimental
-            // OffHand state leak into the custom attack.
-            if (_leftHandRewriteAgent != null || _deferredOffHandRestorePending)
+            EquipmentIndex primarySlot = agent.GetPrimaryWieldedItemIndex();
+            if (primarySlot == EquipmentIndex.None)
             {
-                result = "旧 native 左手实验仍在恢复中，请稍后再试";
-                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                result = "当前没有主手武器";
                 return false;
             }
 
-            if (_offHandProbeAgent != null)
-                RestoreOffHandProbe();
-
-            EquipmentIndex sourceSlot = agent.GetPrimaryWieldedItemIndex();
-            if (sourceSlot == EquipmentIndex.None)
+            // Left hand must use a DIFFERENT equipment slot. Never copy damage from
+            // the right-hand weapon again.
+            EquipmentIndex leftSlot = FindDistinctCurrentOneHandMeleeSlot(
+                agent,
+                primarySlot);
+            if (leftSlot == EquipmentIndex.None)
             {
-                result = "当前没有主手武器槽";
-                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                result = "需要另一个装备槽放一把当前 usage 为单手近战的左手武器";
+                LeftHandSwardLog.Warn("LeftHandIK", result);
                 return false;
             }
 
-            // Reuse the only visual path that has already been proven in-game:
-            // MissionWeapon + AttachWeaponToBone + OffHandItemBone + Identity.
-            if (!AttachCurrentWeaponToLeftItemBone(
+            MissionWeapon leftWeapon = agent.Equipment[leftSlot];
+            if (!IsCurrentUsageOneHandMelee(leftWeapon))
+            {
+                result = "左手候选武器不是有效单手近战武器";
+                return false;
+            }
+
+            if (agent.AgentVisuals == null || agent.Monster == null)
+            {
+                result = "AgentVisuals/Monster 不可用";
+                return false;
+            }
+
+            Skeleton skeleton = agent.AgentVisuals.GetSkeleton();
+            if (skeleton == null || !skeleton.IsValid)
+            {
+                result = "Skeleton 无效";
+                return false;
+            }
+
+            sbyte leftHandBone = agent.Monster.OffHandBoneIndex;
+            sbyte rightHandBone = agent.Monster.MainHandBoneIndex;
+            sbyte leftItemBone = agent.Monster.OffHandItemBoneIndex;
+            sbyte leftShoulderBone = agent.Monster.OffHandShoulderBoneIndex;
+
+            if (leftHandBone < 0 ||
+                rightHandBone < 0 ||
+                leftItemBone < 0 ||
+                leftShoulderBone < 0)
+            {
+                result = "左/右手或左肩骨骼索引无效";
+                return false;
+            }
+
+            agent.ClearHandInverseKinematics();
+            skeleton.ForceUpdateBoneFrames();
+
+            MatrixFrame visualsGlobal = agent.AgentVisuals.GetGlobalFrame();
+            MatrixFrame restLeft =
+                visualsGlobal * skeleton.GetBoneEntitialFrameWithIndex(leftHandBone);
+            MatrixFrame restRight =
+                visualsGlobal * skeleton.GetBoneEntitialFrameWithIndex(rightHandBone);
+
+            if (!AttachWeaponToLeftItemBone(
                     agent,
-                    false,
-                    0.9f,
+                    leftWeapon,
+                    0.85f,
                     out string visualResult))
             {
-                result = "左手视觉建立失败: " + visualResult;
-                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                result = "左手武器挂载失败: " + visualResult;
                 return false;
             }
 
             float now = agent.Mission.CurrentTime;
-
-            // Use a harmless left-arm action only for presentation. This no longer
-            // starts Bannerlord's melee state machine, so the right hand does not attack.
-            LeftHandSwardLog.Info(
-                "LeftHandCustom",
-                "ACTION BEGIN skill=" + skillId
-                + " visual={" + visualResult + "}"
-                + " weapon=" + DescribeMissionWeapon(weapon));
-
-            bool actionAccepted = agent.SetActionChannel(
-                1,
-                ActionIndexCache.act_greeting_left_1,
-                true,
-                (AnimFlags)0UL,
-                0f,
-                2.0f,
-                0.05f,
-                0.2f,
-                0f,
-                false,
-                0.15f,
-                0,
-                false);
-
-            LeftHandSwardLog.Info(
-                "LeftHandCustom",
-                "ACTION RETURN accepted=" + actionAccepted
-                + " action=" + agent.GetCurrentAction(1).GetName());
-
             _customLeftHandAttack = new CustomLeftHandAttackState
             {
                 Agent = agent,
-                Weapon = weapon,
-                SourceSlot = sourceSlot,
+                Weapon = leftWeapon,
+                SourceSlot = leftSlot,
                 SkillId = skillId,
+                Skeleton = skeleton,
+                LeftHandBone = leftHandBone,
+                RightHandBone = rightHandBone,
+                LeftItemBone = leftItemBone,
+                LeftShoulderBone = leftShoulderBone,
+                RestLeftHandWorld = restLeft,
+                RestRightHandWorld = restRight,
                 StartedAt = now,
-                SweepStartAt = now + 0.08f,
-                SweepEndAt = now + 0.46f,
-                HasPreviousTip = false,
-                PreviousTip = Vec3.Zero,
+                AttackEndAt = now + 0.62f,
+                IkResultLogged = false,
+                HasPreviousBlade = false,
+                PreviousBladeBase = Vec3.Zero,
+                PreviousBladeTip = Vec3.Zero,
                 HitRegistered = false
             };
 
             LeftHandSwardLog.Info(
-                "LeftHandCustom",
-                "SWEEP ARMED"
-                + " start=" + _customLeftHandAttack.SweepStartAt
-                + " end=" + _customLeftHandAttack.SweepEndAt
-                + " weaponLength=" + weapon.CurrentUsageItem.WeaponLength);
+                "LeftHandIK",
+                "BEGIN"
+                + " skill=" + skillId
+                + " leftSlot=" + leftSlot
+                + " weapon=" + DescribeMissionWeapon(leftWeapon)
+                + " visual={" + visualResult + "}"
+                + " leftHandBone=" + leftHandBone
+                + " leftItemBone=" + leftItemBone
+                + " shoulderBone=" + leftShoulderBone);
 
-            result = "左手武器已挂载；已启动自定义左手 sweep";
+            result = "已启动程序 IK 左手挥砍";
             return true;
         }
 
@@ -962,6 +1062,11 @@ namespace LeftHandSward.Skills
             _queuedNativeAttackSkillId = null;
             _queuedNativeAttackFlag = Agent.MovementControlFlag.None;
 
+            if (_customLeftHandAttack != null &&
+                _customLeftHandAttack.Agent != null)
+            {
+                _customLeftHandAttack.Agent.ClearHandInverseKinematics();
+            }
             _customLeftHandAttack = null;
             ClearMeleeObservation();
 
@@ -1285,123 +1390,228 @@ namespace LeftHandSward.Skills
             Agent agent = state.Agent;
             if (agent == null ||
                 agent.State != AgentState.Active ||
-                mission.MainAgent != agent)
+                mission.MainAgent != agent ||
+                state.Skeleton == null ||
+                !state.Skeleton.IsValid)
             {
-                LeftHandSwardLog.Warn(
-                    "LeftHandCustom",
-                    "END invalid agent/main-agent");
-                _customLeftHandAttack = null;
+                EndCustomLeftHandAttack("invalid agent/skeleton");
                 return;
             }
 
             float now = mission.CurrentTime;
-            if (now < state.SweepStartAt)
-                return;
-
-            if (now > state.SweepEndAt)
-            {
-                LeftHandSwardLog.Info(
-                    "LeftHandCustom",
-                    "END hit=" + state.HitRegistered);
-                _customLeftHandAttack = null;
-                return;
-            }
-
-            float duration = Math.Max(0.01f, state.SweepEndAt - state.SweepStartAt);
+            float duration = Math.Max(0.01f, state.AttackEndAt - state.StartedAt);
             float progress = TaleWorlds.Library.MathF.Clamp(
-                (now - state.SweepStartAt) / duration,
+                (now - state.StartedAt) / duration,
                 0f,
                 1f);
 
-            WeaponComponentData usage = state.Weapon.CurrentUsageItem;
-            if (usage == null)
+            if (now >= state.AttackEndAt)
             {
-                LeftHandSwardLog.Warn("LeftHandCustom", "END weapon usage became null");
-                _customLeftHandAttack = null;
+                EndCustomLeftHandAttack("complete");
                 return;
             }
+
+            state.Skeleton.ForceUpdateBoneFrames();
+            MatrixFrame visualsGlobal = agent.AgentVisuals.GetGlobalFrame();
+
+            MatrixFrame currentRight =
+                visualsGlobal * state.Skeleton.GetBoneEntitialFrameWithIndex(
+                    state.RightHandBone);
+            MatrixFrame shoulderWorld =
+                visualsGlobal * state.Skeleton.GetBoneEntitialFrameWithIndex(
+                    state.LeftShoulderBone);
 
             Vec3 forward = agent.LookDirection;
             forward.z = 0f;
             if (forward.LengthSquared < 0.0001f)
-                forward = new Vec3(0f, 1f, 0f, -1f);
+                forward = visualsGlobal.rotation.f;
+            forward.z = 0f;
             forward.Normalize();
 
             Vec3 right = Vec3.CrossProduct(forward, Vec3.Up);
             if (right.LengthSquared < 0.0001f)
-                right = new Vec3(1f, 0f, 0f, -1f);
+                right = visualsGlobal.rotation.s;
+            right.z = 0f;
             right.Normalize();
 
-            Vec3 center = agent.GetEyeGlobalPosition();
-            center.z -= 0.55f;
-            center += right * -0.18f;
+            MatrixFrame windup = state.RestLeftHandWorld;
+            windup.origin =
+                shoulderWorld.origin
+                - right * 0.30f
+                - forward * 0.08f
+                + Vec3.Up * 0.16f;
+
+            MatrixFrame strikeStart = state.RestLeftHandWorld;
+            strikeStart.origin =
+                shoulderWorld.origin
+                - right * 0.34f
+                + forward * 0.20f
+                + Vec3.Up * 0.10f;
+
+            MatrixFrame strikeEnd = state.RestLeftHandWorld;
+            strikeEnd.origin =
+                shoulderWorld.origin
+                + right * 0.30f
+                + forward * 0.55f
+                - Vec3.Up * 0.06f;
+
+            // Rotate only the hand target, not the whole Agent/action system.
+            windup.rotation.RotateAboutUp(-0.45f);
+            strikeStart.rotation.RotateAboutUp(-0.30f);
+            strikeEnd.rotation.RotateAboutUp(0.65f);
+
+            MatrixFrame leftTarget;
+            bool activeStrike;
+
+            if (progress < 0.22f)
+            {
+                float t = SmoothStep01(progress / 0.22f);
+                leftTarget = MatrixFrame.Slerp(
+                    state.RestLeftHandWorld,
+                    windup,
+                    t);
+                activeStrike = false;
+            }
+            else if (progress < 0.72f)
+            {
+                float t = SmoothStep01((progress - 0.22f) / 0.50f);
+                leftTarget = MatrixFrame.Slerp(
+                    strikeStart,
+                    strikeEnd,
+                    t);
+                activeStrike = true;
+            }
+            else
+            {
+                float t = SmoothStep01((progress - 0.72f) / 0.28f);
+                leftTarget = MatrixFrame.Slerp(
+                    strikeEnd,
+                    state.RestLeftHandWorld,
+                    t);
+                activeStrike = false;
+            }
+
+            bool ikAccepted = agent.SetHandInverseKinematicsFrame(
+                leftTarget,
+                currentRight);
+
+            if (!state.IkResultLogged)
+            {
+                state.IkResultLogged = true;
+                LeftHandSwardLog.Info(
+                    "LeftHandIK",
+                    "IK RETURN accepted=" + ikAccepted
+                    + " restLeft={" + DescribeFrame(state.RestLeftHandWorld) + "}"
+                    + " firstTarget={" + DescribeFrame(leftTarget) + "}");
+            }
+
+            if (!ikAccepted)
+            {
+                EndCustomLeftHandAttack("SetHandInverseKinematicsFrame rejected");
+                return;
+            }
+
+            if (!activeStrike || state.HitRegistered)
+                return;
+
+            WeaponComponentData usage = state.Weapon.CurrentUsageItem;
+            if (usage == null)
+            {
+                EndCustomLeftHandAttack("weapon usage became null");
+                return;
+            }
+
+            // Collision follows the procedural LEFT HAND target. It no longer uses
+            // the right-hand weapon, right-hand action, or a character-centered arc.
+            Vec3 bladeBase = leftTarget.origin;
+            Vec3 armOut = bladeBase - shoulderWorld.origin;
+            if (armOut.LengthSquared < 0.0001f)
+                armOut = forward;
+            armOut.Normalize();
 
             float weaponLength = TaleWorlds.Library.MathF.Clamp(
                 usage.WeaponLength * 0.01f,
-                0.55f,
-                1.8f);
-            float reach = 0.42f + weaponLength;
+                0.45f,
+                1.80f);
+            Vec3 bladeTip = bladeBase + armOut * weaponLength;
 
-            // Left-to-right horizontal arc in front of the player.
-            float angle = (-75f + 150f * progress) * (TaleWorlds.Library.MathF.PI / 180f);
-            Vec3 sweepDirection =
-                forward * TaleWorlds.Library.MathF.Cos(angle)
-                + right * TaleWorlds.Library.MathF.Sin(angle);
-            sweepDirection.Normalize();
+            Agent victim = null;
+            sbyte boneIndex = 0;
+            Vec3 hitPoint = bladeTip;
 
-            Vec3 tip = center + sweepDirection * reach;
-
-            if (!state.HitRegistered)
+            if (TryRayCastLeftHandVictim(
+                    mission,
+                    agent,
+                    bladeBase,
+                    bladeTip,
+                    out Agent bladeVictim,
+                    out sbyte bladeBone,
+                    out Vec3 bladeHit))
             {
-                Agent victim = null;
-                sbyte boneIndex = 0;
-                Vec3 hitPoint = tip;
-
-                // First test the blade itself at this frame.
-                if (TryRayCastLeftHandVictim(
-                        mission,
-                        agent,
-                        center,
-                        tip,
-                        out Agent bladeVictim,
-                        out sbyte bladeBone,
-                        out Vec3 bladeHit))
-                {
-                    victim = bladeVictim;
-                    boneIndex = bladeBone;
-                    hitPoint = bladeHit;
-                }
-                // Then test tip movement between frames so low frame rates do not
-                // create holes in the sweep.
-                else if (state.HasPreviousTip &&
-                         TryRayCastLeftHandVictim(
-                             mission,
-                             agent,
-                             state.PreviousTip,
-                             tip,
-                             out Agent arcVictim,
-                             out sbyte arcBone,
-                             out Vec3 arcHit))
-                {
-                    victim = arcVictim;
-                    boneIndex = arcBone;
-                    hitPoint = arcHit;
-                }
-
-                if (victim != null)
-                {
-                    state.HitRegistered = RegisterCustomLeftHandBlow(
-                        state,
-                        victim,
-                        boneIndex,
-                        hitPoint,
-                        sweepDirection,
-                        progress);
-                }
+                victim = bladeVictim;
+                boneIndex = bladeBone;
+                hitPoint = bladeHit;
+            }
+            else if (state.HasPreviousBlade &&
+                     TryRayCastLeftHandVictim(
+                         mission,
+                         agent,
+                         state.PreviousBladeTip,
+                         bladeTip,
+                         out Agent sweptVictim,
+                         out sbyte sweptBone,
+                         out Vec3 sweptHit))
+            {
+                victim = sweptVictim;
+                boneIndex = sweptBone;
+                hitPoint = sweptHit;
             }
 
-            state.PreviousTip = tip;
-            state.HasPreviousTip = true;
+            if (victim != null)
+            {
+                Vec3 sweepDirection = bladeTip - state.PreviousBladeTip;
+                if (!state.HasPreviousBlade ||
+                    sweepDirection.LengthSquared < 0.0001f)
+                {
+                    sweepDirection = right;
+                }
+                sweepDirection.Normalize();
+
+                state.HitRegistered = RegisterCustomLeftHandBlow(
+                    state,
+                    victim,
+                    boneIndex,
+                    hitPoint,
+                    sweepDirection,
+                    progress);
+            }
+
+            state.PreviousBladeBase = bladeBase;
+            state.PreviousBladeTip = bladeTip;
+            state.HasPreviousBlade = true;
+        }
+
+        private static float SmoothStep01(float value)
+        {
+            float t = TaleWorlds.Library.MathF.Clamp(value, 0f, 1f);
+            return t * t * (3f - 2f * t);
+        }
+
+        private static void EndCustomLeftHandAttack(string reason)
+        {
+            CustomLeftHandAttackState state = _customLeftHandAttack;
+            if (state == null)
+                return;
+
+            if (state.Agent != null)
+                state.Agent.ClearHandInverseKinematics();
+
+            LeftHandSwardLog.Info(
+                "LeftHandIK",
+                "END reason=" + reason
+                + " hit=" + state.HitRegistered);
+
+            _customLeftHandAttack = null;
         }
 
         private static bool TryRayCastLeftHandVictim(
@@ -1468,9 +1678,8 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            // Prototype damage: use the weapon's own swing stat, but reduce the raw
-            // number because this direct Blow path does not run the full native melee
-            // armor/momentum calculation yet.
+            // Prototype damage uses the SECONDARY/left-hand MissionWeapon selected
+            // at activation. It no longer reuses the primary/right-hand weapon.
             int rawSwingDamage = Math.Max(1, usage.SwingDamage);
             int damage = Math.Max(6, Math.Min(70, (int)TaleWorlds.Library.MathF.Round(rawSwingDamage * 0.55f)));
 
@@ -1549,7 +1758,7 @@ namespace LeftHandSward.Skills
             float healthBefore = victim.Health;
 
             LeftHandSwardLog.Info(
-                "LeftHandCustom",
+                "LeftHandIK",
                 "HIT BEGIN"
                 + " victim=" + SafeAgentName(victim)
                 + " bone=" + boneIndex
@@ -1559,7 +1768,7 @@ namespace LeftHandSward.Skills
             victim.RegisterBlow(blow, collisionData);
 
             LeftHandSwardLog.Info(
-                "LeftHandCustom",
+                "LeftHandIK",
                 "HIT RETURN"
                 + " victim=" + SafeAgentName(victim)
                 + " healthAfter=" + victim.Health);
