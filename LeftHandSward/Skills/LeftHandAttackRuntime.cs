@@ -28,11 +28,15 @@ namespace LeftHandSward.Skills
 
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
         private static readonly List<NativeBoneAttachmentState> _nativeBoneAttachments = new List<NativeBoneAttachmentState>();
-        private const string LeftReleaseActionName =
-            "act_lhs_release_leftarm_1h";
-        private static ActionIndexCache _leftReleaseAction =
+        private const string LeftReleaseActionName1H =
+            "act_lhs_release_leftarm_weapon_1h";
+        private const string LeftReleaseActionName2H =
+            "act_lhs_release_leftarm_weapon_2h";
+        private static ActionIndexCache _leftReleaseAction1H =
             ActionIndexCache.act_none;
-        private static bool _leftReleaseActionResolved;
+        private static ActionIndexCache _leftReleaseAction2H =
+            ActionIndexCache.act_none;
+        private static bool _leftReleaseActionsResolved;
 
         private static Agent _offHandProbeAgent;
         private static EquipmentIndex _offHandProbePreviousIndex = EquipmentIndex.None;
@@ -669,46 +673,57 @@ namespace LeftHandSward.Skills
                 out result);
         }
 
-        private static bool TryResolveLeftReleaseAction(
+        private static bool TryResolveLeftReleaseActions(
             out string error)
         {
             error = null;
 
-            if (!_leftReleaseActionResolved)
+            if (!_leftReleaseActionsResolved)
             {
-                _leftReleaseAction =
-                    ActionIndexCache.Create(LeftReleaseActionName);
-                _leftReleaseActionResolved = true;
+                _leftReleaseAction1H =
+                    ActionIndexCache.Create(LeftReleaseActionName1H);
+                _leftReleaseAction2H =
+                    ActionIndexCache.Create(LeftReleaseActionName2H);
+                _leftReleaseActionsResolved = true;
             }
 
-            if (_leftReleaseAction.Index < 0)
+            if (_leftReleaseAction1H.Index < 0 ||
+                _leftReleaseAction2H.Index < 0)
             {
                 error =
-                    "左臂 ReleaseMelee action 未注册: "
-                    + LeftReleaseActionName
-                    + "。请先重新编译模块，让构建步骤生成左手 AnimationClip TPAC。";
+                    "左臂 ReleaseMelee action 未完整注册"
+                    + " 1H=" + LeftReleaseActionName1H
+                    + "/" + _leftReleaseAction1H.Index
+                    + " 2H=" + LeftReleaseActionName2H
+                    + "/" + _leftReleaseAction2H.Index
+                    + "。请重新编译模块并重新生成左手 TPAC。";
                 LeftHandSwardLog.Warn("LeftHandNative", error);
                 return false;
             }
 
-            Agent.ActionCodeType type =
-                MBAnimation.GetActionType(_leftReleaseAction);
-            if (type != Agent.ActionCodeType.ReleaseMelee)
+            Agent.ActionCodeType type1H =
+                MBAnimation.GetActionType(_leftReleaseAction1H);
+            Agent.ActionCodeType type2H =
+                MBAnimation.GetActionType(_leftReleaseAction2H);
+
+            if (type1H != Agent.ActionCodeType.ReleaseMelee ||
+                type2H != Agent.ActionCodeType.ReleaseMelee)
             {
                 error =
-                    "左臂 action 类型错误: "
-                    + LeftReleaseActionName
-                    + " type=" + type;
+                    "左臂 action 类型错误"
+                    + " 1H=" + type1H
+                    + " 2H=" + type2H;
                 LeftHandSwardLog.Warn("LeftHandNative", error);
                 return false;
             }
 
             LeftHandSwardLog.Info(
                 "LeftHandNative",
-                "ACTION REGISTERED"
-                + " name=" + LeftReleaseActionName
-                + " index=" + _leftReleaseAction.Index
-                + " type=" + type);
+                "ACTIONS REGISTERED"
+                + " 1H=" + LeftReleaseActionName1H
+                + "/" + _leftReleaseAction1H.Index
+                + " 2H=" + LeftReleaseActionName2H
+                + "/" + _leftReleaseAction2H.Index);
             return true;
         }
 
@@ -731,7 +746,7 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            if (!TryResolveLeftReleaseAction(out string actionError))
+            if (!TryResolveLeftReleaseActions(out string actionError))
             {
                 result = actionError;
                 return false;
@@ -797,7 +812,7 @@ namespace LeftHandSward.Skills
                 + " primary=" + _leftHandRewritePrimarySlot
                 + " mainWeapon=" + DescribeMissionWeapon(mainWeapon)
                 + " leftVisual=main-hand-clone"
-                + " customRelease=" + LeftReleaseActionName);
+                + " customRelease=auto-1H/2H-weapon-combat");
 
             bool queued = QueueNativeAttack(
                 agent,
@@ -817,7 +832,7 @@ namespace LeftHandSward.Skills
             result =
                 "已复制当前主手武器模型到左手并排队原生 melee；"
                 + "不建立 OffHand，不限制单手/双手；"
-                + "ReleaseMelee 将切到 Native OffHand 盾击 motion + use_left_hand_during_attack";
+                + "ReleaseMelee 使用 Native OffHand 盾击左臂 motion，但 CombatParameter 按当前 1H/2H 武器 Release 选择";
             return true;
         }
 
@@ -1207,6 +1222,27 @@ namespace LeftHandSward.Skills
                 float progress =
                     agent.GetCurrentActionProgress(1);
 
+                MissionWeapon currentWeapon = agent.WieldedWeapon;
+                bool use2HCombat =
+                    currentName.IndexOf(
+                        "_2h",
+                        StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    (!currentWeapon.IsEmpty &&
+                     currentWeapon.CurrentUsageItem != null &&
+                     currentWeapon.CurrentUsageItem.WeaponFlags.HasAnyFlag(
+                         WeaponFlags.NotUsableWithOneHand));
+
+                ActionIndexCache selectedRelease =
+                    use2HCombat
+                        ? _leftReleaseAction2H
+                        : _leftReleaseAction1H;
+                string selectedReleaseName =
+                    use2HCombat
+                        ? LeftReleaseActionName2H
+                        : LeftReleaseActionName1H;
+                string combatProfile =
+                    use2HCombat ? "weapon-2H" : "weapon-1H";
+
                 AnimFlags beforeFlags =
                     agent.GetCurrentAnimationFlag(1);
 
@@ -1214,7 +1250,8 @@ namespace LeftHandSward.Skills
                     "LeftHandNative",
                     "CUSTOM RELEASE BEGIN"
                     + " vanilla=" + currentName
-                    + " custom=" + LeftReleaseActionName
+                    + " custom=" + selectedReleaseName
+                    + " combatProfile=" + combatProfile
                     + " motionDonor=NativeOffHandShieldBash"
                     + " progress=" + progress
                     + " beforeFlags=" + beforeFlags
@@ -1222,7 +1259,7 @@ namespace LeftHandSward.Skills
 
                 bool accepted = agent.SetActionChannel(
                     1,
-                    _leftReleaseAction,
+                    selectedRelease,
                     true,
                     (AnimFlags)0UL,
                     0f,
