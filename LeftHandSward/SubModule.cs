@@ -32,7 +32,9 @@ namespace LeftHandSward
         protected override void OnSubModuleUnloaded()
         {
             LeftHandSwardLog.Info("Lifecycle", "OnSubModuleUnloaded");
-            _harmony?.UnpatchSelf();
+            // Do not call Harmony.UnpatchSelf/UnpatchAll here.
+            // Bannerlord distributions may expose different Harmony API versions,
+            // and the process is shutting down when the module unloads anyway.
             _harmony = null;
             base.OnSubModuleUnloaded();
         }
