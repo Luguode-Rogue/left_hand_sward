@@ -26,8 +26,23 @@ namespace LeftHandSward.Skills
             public float ExpireAt;
         }
 
+        private sealed class CustomLeftHandAttackState
+        {
+            public Agent Agent;
+            public MissionWeapon Weapon;
+            public EquipmentIndex SourceSlot;
+            public string SkillId;
+            public float StartedAt;
+            public float SweepStartAt;
+            public float SweepEndAt;
+            public bool HasPreviousTip;
+            public Vec3 PreviousTip;
+            public bool HitRegistered;
+        }
+
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
         private static readonly List<NativeBoneAttachmentState> _nativeBoneAttachments = new List<NativeBoneAttachmentState>();
+        private static CustomLeftHandAttackState _customLeftHandAttack;
 
         private static Agent _offHandProbeAgent;
         private static EquipmentIndex _offHandProbePreviousIndex = EquipmentIndex.None;
@@ -573,6 +588,119 @@ namespace LeftHandSward.Skills
                 out result);
         }
 
+        public static bool StartCustomLeftHandAttack(
+            Agent agent,
+            string skillId,
+            out string result)
+        {
+            if (!TryGetActiveMeleeWeapon(agent, out MissionWeapon weapon, out string error))
+            {
+                result = error;
+                return false;
+            }
+
+            if (agent.Mission == null || agent.Mission.MainAgent != agent)
+            {
+                result = "左手攻击目前只支持 MainAgent";
+                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                return false;
+            }
+
+            if (_customLeftHandAttack != null)
+            {
+                result = "上一轮左手攻击尚未结束";
+                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                return false;
+            }
+
+            // The native OffHand route is retired. Do not let a stale experimental
+            // OffHand state leak into the custom attack.
+            if (_leftHandRewriteAgent != null || _deferredOffHandRestorePending)
+            {
+                result = "旧 native 左手实验仍在恢复中，请稍后再试";
+                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                return false;
+            }
+
+            if (_offHandProbeAgent != null)
+                RestoreOffHandProbe();
+
+            EquipmentIndex sourceSlot = agent.GetPrimaryWieldedItemIndex();
+            if (sourceSlot == EquipmentIndex.None)
+            {
+                result = "当前没有主手武器槽";
+                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                return false;
+            }
+
+            // Reuse the only visual path that has already been proven in-game:
+            // MissionWeapon + AttachWeaponToBone + OffHandItemBone + Identity.
+            if (!AttachCurrentWeaponToLeftItemBone(
+                    agent,
+                    false,
+                    0.9f,
+                    out string visualResult))
+            {
+                result = "左手视觉建立失败: " + visualResult;
+                LeftHandSwardLog.Warn("LeftHandCustom", result);
+                return false;
+            }
+
+            float now = agent.Mission.CurrentTime;
+
+            // Use a harmless left-arm action only for presentation. This no longer
+            // starts Bannerlord's melee state machine, so the right hand does not attack.
+            LeftHandSwardLog.Info(
+                "LeftHandCustom",
+                "ACTION BEGIN skill=" + skillId
+                + " visual={" + visualResult + "}"
+                + " weapon=" + DescribeMissionWeapon(weapon));
+
+            bool actionAccepted = agent.SetActionChannel(
+                1,
+                ActionIndexCache.act_greeting_left_1,
+                true,
+                (AnimFlags)0UL,
+                0f,
+                2.0f,
+                0.05f,
+                0.2f,
+                0f,
+                false,
+                0.15f,
+                0,
+                false);
+
+            LeftHandSwardLog.Info(
+                "LeftHandCustom",
+                "ACTION RETURN accepted=" + actionAccepted
+                + " action=" + agent.GetCurrentAction(1).GetName());
+
+            _customLeftHandAttack = new CustomLeftHandAttackState
+            {
+                Agent = agent,
+                Weapon = weapon,
+                SourceSlot = sourceSlot,
+                SkillId = skillId,
+                StartedAt = now,
+                SweepStartAt = now + 0.08f,
+                SweepEndAt = now + 0.46f,
+                HasPreviousTip = false,
+                PreviousTip = Vec3.Zero,
+                HitRegistered = false
+            };
+
+            LeftHandSwardLog.Info(
+                "LeftHandCustom",
+                "SWEEP ARMED"
+                + " start=" + _customLeftHandAttack.SweepStartAt
+                + " end=" + _customLeftHandAttack.SweepEndAt
+                + " weaponLength=" + weapon.CurrentUsageItem.WeaponLength);
+
+            result = "左手武器已挂载；已启动自定义左手 sweep";
+            return true;
+        }
+
         public static bool QueueNativeLeftHandAttack(
             Agent agent,
             string skillId,
@@ -759,6 +887,7 @@ namespace LeftHandSward.Skills
 
             TickDeferredOffHandRestore(mission);
             TickNativeLeftHandRewrite(mission);
+            TickCustomLeftHandAttack(mission);
 
             for (int i = _visualClones.Count - 1; i >= 0; i--)
             {
@@ -833,6 +962,7 @@ namespace LeftHandSward.Skills
             _queuedNativeAttackSkillId = null;
             _queuedNativeAttackFlag = Agent.MovementControlFlag.None;
 
+            _customLeftHandAttack = null;
             ClearMeleeObservation();
 
             _deferredOffHandRestorePending = false;
@@ -1146,6 +1276,302 @@ namespace LeftHandSward.Skills
             RestoreOffHandProbe();
         }
 
+        private static void TickCustomLeftHandAttack(Mission mission)
+        {
+            CustomLeftHandAttackState state = _customLeftHandAttack;
+            if (state == null)
+                return;
+
+            Agent agent = state.Agent;
+            if (agent == null ||
+                agent.State != AgentState.Active ||
+                mission.MainAgent != agent)
+            {
+                LeftHandSwardLog.Warn(
+                    "LeftHandCustom",
+                    "END invalid agent/main-agent");
+                _customLeftHandAttack = null;
+                return;
+            }
+
+            float now = mission.CurrentTime;
+            if (now < state.SweepStartAt)
+                return;
+
+            if (now > state.SweepEndAt)
+            {
+                LeftHandSwardLog.Info(
+                    "LeftHandCustom",
+                    "END hit=" + state.HitRegistered);
+                _customLeftHandAttack = null;
+                return;
+            }
+
+            float duration = Math.Max(0.01f, state.SweepEndAt - state.SweepStartAt);
+            float progress = MathF.Clamp(
+                (now - state.SweepStartAt) / duration,
+                0f,
+                1f);
+
+            WeaponComponentData usage = state.Weapon.CurrentUsageItem;
+            if (usage == null)
+            {
+                LeftHandSwardLog.Warn("LeftHandCustom", "END weapon usage became null");
+                _customLeftHandAttack = null;
+                return;
+            }
+
+            Vec3 forward = agent.LookDirection;
+            forward.z = 0f;
+            if (forward.LengthSquared < 0.0001f)
+                forward = new Vec3(0f, 1f, 0f, -1f);
+            forward.Normalize();
+
+            Vec3 right = Vec3.CrossProduct(forward, Vec3.Up);
+            if (right.LengthSquared < 0.0001f)
+                right = new Vec3(1f, 0f, 0f, -1f);
+            right.Normalize();
+
+            Vec3 center = agent.GetEyeGlobalPosition();
+            center.z -= 0.55f;
+            center += right * -0.18f;
+
+            float weaponLength = MathF.Clamp(
+                usage.WeaponLength * 0.01f,
+                0.55f,
+                1.8f);
+            float reach = 0.42f + weaponLength;
+
+            // Left-to-right horizontal arc in front of the player.
+            float angle = (-75f + 150f * progress) * (MathF.PI / 180f);
+            Vec3 sweepDirection =
+                forward * MathF.Cos(angle)
+                + right * MathF.Sin(angle);
+            sweepDirection.Normalize();
+
+            Vec3 tip = center + sweepDirection * reach;
+
+            if (!state.HitRegistered)
+            {
+                Agent victim = null;
+                sbyte boneIndex = 0;
+                Vec3 hitPoint = tip;
+
+                // First test the blade itself at this frame.
+                if (TryRayCastLeftHandVictim(
+                        mission,
+                        agent,
+                        center,
+                        tip,
+                        out Agent bladeVictim,
+                        out sbyte bladeBone,
+                        out Vec3 bladeHit))
+                {
+                    victim = bladeVictim;
+                    boneIndex = bladeBone;
+                    hitPoint = bladeHit;
+                }
+                // Then test tip movement between frames so low frame rates do not
+                // create holes in the sweep.
+                else if (state.HasPreviousTip &&
+                         TryRayCastLeftHandVictim(
+                             mission,
+                             agent,
+                             state.PreviousTip,
+                             tip,
+                             out Agent arcVictim,
+                             out sbyte arcBone,
+                             out Vec3 arcHit))
+                {
+                    victim = arcVictim;
+                    boneIndex = arcBone;
+                    hitPoint = arcHit;
+                }
+
+                if (victim != null)
+                {
+                    state.HitRegistered = RegisterCustomLeftHandBlow(
+                        state,
+                        victim,
+                        boneIndex,
+                        hitPoint,
+                        sweepDirection,
+                        progress);
+                }
+            }
+
+            state.PreviousTip = tip;
+            state.HasPreviousTip = true;
+        }
+
+        private static bool TryRayCastLeftHandVictim(
+            Mission mission,
+            Agent attacker,
+            Vec3 source,
+            Vec3 target,
+            out Agent victim,
+            out sbyte boneIndex,
+            out Vec3 hitPoint)
+        {
+            victim = null;
+            boneIndex = 0;
+            hitPoint = target;
+
+            float collisionDistance;
+            sbyte collisionBone;
+            Agent candidate = mission.RayCastForClosestAgentsLimbs(
+                source,
+                target,
+                attacker.Index,
+                0.22f,
+                out collisionDistance,
+                out collisionBone);
+
+            if (candidate == null ||
+                candidate.State != AgentState.Active ||
+                candidate == attacker ||
+                attacker.IsFriendOf(candidate))
+            {
+                return false;
+            }
+
+            Vec3 delta = target - source;
+            float length = delta.Length;
+            if (length > 0.0001f)
+            {
+                float t = MathF.Clamp(collisionDistance / length, 0f, 1f);
+                hitPoint = source + delta * t;
+            }
+
+            victim = candidate;
+            boneIndex = collisionBone;
+            return true;
+        }
+
+        private static bool RegisterCustomLeftHandBlow(
+            CustomLeftHandAttackState state,
+            Agent victim,
+            sbyte boneIndex,
+            Vec3 hitPoint,
+            Vec3 sweepDirection,
+            float attackProgress)
+        {
+            Agent attacker = state.Agent;
+            MissionWeapon weapon = state.Weapon;
+            WeaponComponentData usage = weapon.CurrentUsageItem;
+
+            if (attacker == null ||
+                victim == null ||
+                usage == null ||
+                victim.State != AgentState.Active)
+            {
+                return false;
+            }
+
+            // Prototype damage: use the weapon's own swing stat, but reduce the raw
+            // number because this direct Blow path does not run the full native melee
+            // armor/momentum calculation yet.
+            int rawSwingDamage = Math.Max(1, usage.SwingDamage);
+            int damage = Math.Max(6, Math.Min(70, (int)MathF.Round(rawSwingDamage * 0.55f)));
+
+            Vec3 blowDirection = victim.Position - attacker.Position;
+            blowDirection.z = 0f;
+            if (blowDirection.LengthSquared < 0.0001f)
+                blowDirection = sweepDirection;
+            blowDirection.Normalize();
+
+            Blow blow = new Blow(attacker.Index);
+            blow.DamageType = usage.SwingDamageType;
+            blow.StrikeType = StrikeType.Swing;
+            blow.BoneIndex = boneIndex;
+            blow.BaseMagnitude = damage;
+            blow.GlobalPosition = hitPoint;
+            blow.DamagedPercentage = 1f;
+            blow.SwingDirection = sweepDirection;
+            blow.Direction = blowDirection;
+            blow.InflictedDamage = damage;
+            blow.DamageCalculated = true;
+
+            sbyte attachBone = attacker.Monster == null
+                ? (sbyte)-1
+                : attacker.Monster.OffHandItemBoneIndex;
+
+            blow.WeaponRecord.FillAsMeleeBlow(
+                weapon.Item,
+                usage,
+                (int)state.SourceSlot,
+                attachBone);
+
+            AttackCollisionData collisionData =
+                AttackCollisionData.GetAttackCollisionDataForDebugPurpose(
+                    false,
+                    false,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    CombatCollisionResult.StrikeAgent,
+                    (int)state.SourceSlot,
+                    (int)StrikeType.Swing,
+                    (int)usage.SwingDamageType,
+                    boneIndex,
+                    BoneBodyPartType.Chest,
+                    attachBone,
+                    Agent.UsageDirection.AttackLeft,
+                    -1,
+                    CombatHitResultFlags.NormalHit,
+                    attackProgress,
+                    0.8f,
+                    0f,
+                    0f,
+                    0f,
+                    0f,
+                    0f,
+                    0f,
+                    Vec3.Up,
+                    blowDirection,
+                    hitPoint,
+                    Vec3.Zero,
+                    Vec3.Zero,
+                    victim.Velocity,
+                    Vec3.Up);
+
+            collisionData.BaseMagnitude = damage;
+            collisionData.InflictedDamage = damage;
+
+            float healthBefore = victim.Health;
+
+            LeftHandSwardLog.Info(
+                "LeftHandCustom",
+                "HIT BEGIN"
+                + " victim=" + SafeAgentName(victim)
+                + " bone=" + boneIndex
+                + " damage=" + damage
+                + " healthBefore=" + healthBefore);
+
+            victim.RegisterBlow(blow, collisionData);
+
+            LeftHandSwardLog.Info(
+                "LeftHandCustom",
+                "HIT RETURN"
+                + " victim=" + SafeAgentName(victim)
+                + " healthAfter=" + victim.Health);
+
+            Report(
+                state.SkillId
+                + " 左手命中 "
+                + SafeAgentName(victim)
+                + " damage=" + damage);
+
+            return true;
+        }
+
         private static int GetMainHandUsageIndex(Agent agent)
         {
             if (agent == null)
@@ -1319,9 +1745,13 @@ namespace LeftHandSward.Skills
 
             try
             {
-                return DescribeAgentAction(agent)
+                // Deliberately omit actionProgress and MovementFlags here.
+                // Including them caused one log line almost every frame.
+                return "name=" + SafeAgentName(agent)
+                       + " actionType=" + agent.GetCurrentActionType(1)
+                       + " actionStage=" + agent.GetCurrentActionStage(1)
+                       + " actionDirection=" + agent.GetCurrentActionDirection(1)
                        + " animFlags=" + agent.GetCurrentAnimationFlag(1)
-                       + " movementFlags=" + agent.MovementFlags
                        + " hands={" + DescribeHands(agent) + "}";
             }
             catch (Exception ex)
