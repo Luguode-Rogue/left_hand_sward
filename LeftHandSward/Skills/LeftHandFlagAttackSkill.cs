@@ -21,7 +21,6 @@ namespace LeftHandSward.Skills
         public override bool Activate(Agent casterAgent)
         {
             LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
-            LeftHandAttackRuntime.RemoveTemporaryOffhand(casterAgent);
 
             if (!LeftHandAttackRuntime.AddLeftHandVisualClone(
                     casterAgent,
