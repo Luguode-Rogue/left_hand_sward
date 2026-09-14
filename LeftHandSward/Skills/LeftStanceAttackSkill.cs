@@ -11,11 +11,11 @@ namespace LeftHandSward.Skills
         public LeftStanceAttackSkill()
         {
             SkillID = Id;
-            Type = SPSkillType.MainActive;
+            Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
             Text = new TextObject("左手测试-镜像LeftStance动作");
-            Description = new TextObject("按主主动技能键 E 独立使用原版 slashleft_1h_left_stance 释放动作，并叠加换手/左手攻击 flags，测试左右镜像方向。");
+            Description = new TextObject("按副主动技能键 LeftAlt 独立使用原版 slashleft_1h_left_stance 释放动作，并叠加换手/左手攻击 flags，测试左右镜像方向。");
         }
 
         public override bool Activate(Agent casterAgent)
