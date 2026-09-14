@@ -17,13 +17,27 @@ internal static class Program
     private const string LeftColliderFlag =
         "use_left_hand_during_attack";
 
+    private sealed class SegmentRecord
+    {
+        public ulong ActualSize;
+        public ulong StorageSize;
+        public Guid OwnerGuid;
+        public Guid TypeGuid;
+        public ulong UnknownUlong;
+        public uint UnknownUint;
+        public byte StorageFormat;
+        public byte[] StoredData = Array.Empty<byte>();
+    }
+
     private sealed class ClipRecord
     {
         public int PackageVersion;
         public int AssetVersion;
+        public Guid ResourceGuid;
         public byte[] Metadata = Array.Empty<byte>();
         public byte[] Dependencies = Array.Empty<byte>();
         public int DependencyCount;
+        public List<SegmentRecord> Segments = new();
         public string SourcePackage = "";
     }
 
@@ -61,12 +75,14 @@ internal static class Program
                 source.AssetVersion,
                 patchedMetadata,
                 source.Dependencies,
-                source.DependencyCount);
+                source.DependencyCount,
+                source.Segments);
 
             Console.WriteLine(
                 "[LeftHandClipBuilder] sourceAction=" + SourceAction
                 + " sourceClip=" + sourceClip
                 + " sourcePackage=" + source.SourcePackage
+                + " sourceSegments=" + source.Segments.Count
                 + " outputClip=" + OutputClip
                 + " output=" + output);
             return 0;
@@ -171,7 +187,7 @@ internal static class Program
             for (int i = 0; i < resourceCount; i++)
             {
                 Guid typeGuid = new(br.ReadBytes(16));
-                br.ReadBytes(16); // resource guid
+                Guid resourceGuid = new(br.ReadBytes(16));
                 int assetVersion =
                     packageVersion >= 2 ? br.ReadInt32() : 0;
                 string name = ReadSizedString(br);
@@ -185,16 +201,35 @@ internal static class Program
                 br.ReadInt64(); // checksum
 
                 int segmentCount = br.ReadInt32();
-                if (segmentCount < 0)
-                    throw new InvalidDataException("negative segment count");
+                if (segmentCount < 0 || segmentCount > 4096)
+                    throw new InvalidDataException("invalid segment count");
 
-                // AnimationClip resources are metadata-only. We can scan other
-                // asset types by skipping their segment descriptors.
-                const int SegmentDescriptorSize =
-                    8 + 8 + 8 + 16 + 16 + 8 + 4 + 1;
-                br.BaseStream.Seek(
-                    (long)segmentCount * SegmentDescriptorSize,
-                    SeekOrigin.Current);
+                List<(ulong Offset, SegmentRecord Segment)> segmentHeaders =
+                    new(segmentCount);
+
+                for (int j = 0; j < segmentCount; j++)
+                {
+                    ulong offset = br.ReadUInt64();
+                    ulong actualSize = br.ReadUInt64();
+                    ulong storageSize = br.ReadUInt64();
+                    Guid ownerGuid = new(br.ReadBytes(16));
+                    Guid typeGuidOfSegment = new(br.ReadBytes(16));
+                    ulong unknownUlong = br.ReadUInt64();
+                    uint unknownUint = br.ReadUInt32();
+                    byte storageFormat = br.ReadByte();
+
+                    segmentHeaders.Add(
+                        (offset, new SegmentRecord
+                        {
+                            ActualSize = actualSize,
+                            StorageSize = storageSize,
+                            OwnerGuid = ownerGuid,
+                            TypeGuid = typeGuidOfSegment,
+                            UnknownUlong = unknownUlong,
+                            UnknownUint = unknownUint,
+                            StorageFormat = storageFormat
+                        }));
+                }
 
                 int dependencyCount = br.ReadInt32();
                 if (dependencyCount < 0)
@@ -206,17 +241,18 @@ internal static class Program
                 if (typeGuid == AnimationClipType &&
                     string.Equals(name, clipName, StringComparison.Ordinal))
                 {
-                    if (segmentCount != 0)
-                        throw new InvalidDataException(
-                            "AnimationClip unexpectedly has external data segments");
+                    List<SegmentRecord> segments =
+                        ReadStoredSegments(br, segmentHeaders);
 
                     return new ClipRecord
                     {
                         PackageVersion = packageVersion,
                         AssetVersion = assetVersion,
+                        ResourceGuid = resourceGuid,
                         Metadata = metadata,
                         Dependencies = dependencies,
                         DependencyCount = dependencyCount,
+                        Segments = segments,
                         SourcePackage = path
                     };
                 }
@@ -232,6 +268,57 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static List<SegmentRecord> ReadStoredSegments(
+        BinaryReader br,
+        List<(ulong Offset, SegmentRecord Segment)> headers)
+    {
+        List<SegmentRecord> result = new(headers.Count);
+        long returnPosition = br.BaseStream.Position;
+
+        try
+        {
+            foreach ((ulong offset, SegmentRecord segment) in headers)
+            {
+                if (offset > long.MaxValue ||
+                    segment.StorageSize > int.MaxValue)
+                {
+                    throw new InvalidDataException(
+                        "AnimationClip external data segment is too large");
+                }
+
+                long end = checked(
+                    (long)offset + (long)segment.StorageSize);
+
+                if ((long)offset < 0 ||
+                    end < (long)offset ||
+                    end > br.BaseStream.Length)
+                {
+                    throw new InvalidDataException(
+                        "AnimationClip external data segment points outside its TPAC");
+                }
+
+                br.BaseStream.Seek((long)offset, SeekOrigin.Begin);
+                byte[] stored =
+                    br.ReadBytes(checked((int)segment.StorageSize));
+
+                if ((ulong)stored.Length != segment.StorageSize)
+                {
+                    throw new EndOfStreamException(
+                        "AnimationClip external data segment is truncated");
+                }
+
+                segment.StoredData = stored;
+                result.Add(segment);
+            }
+        }
+        finally
+        {
+            br.BaseStream.Seek(returnPosition, SeekOrigin.Begin);
+        }
+
+        return result;
     }
 
     private static byte[] AddFlag(
@@ -317,7 +404,8 @@ internal static class Program
         int assetVersion,
         byte[] metadata,
         byte[] dependencies,
-        int dependencyCount)
+        int dependencyCount,
+        IReadOnlyList<SegmentRecord> segments)
     {
         int packageVersion =
             sourcePackageVersion is 1 or 2
@@ -326,45 +414,256 @@ internal static class Program
 
         byte[] nameBytes = Encoding.UTF8.GetBytes(OutputClip);
 
-        long itemSize =
+        const int SegmentDescriptorSize =
+            8 + 8 + 8 + 16 + 16 + 8 + 4 + 1;
+
+        long itemHeaderSize =
             16 + // type guid
             16 + // asset guid
             (packageVersion >= 2 ? 4 : 0) +
             4 + nameBytes.Length +
             8 + metadata.Length +
-            8 + // checksum
+            8 + // metadata checksum
             4 + // segment count
+            checked((long)segments.Count * SegmentDescriptorSize) +
             4 + dependencies.Length; // dependency count + records
 
-        const int headerSize = 36;
-        long totalSize = headerSize + itemSize;
-        if (totalSize > uint.MaxValue)
-            throw new InvalidDataException("output package too large");
+        const int packageHeaderSize = 36;
+        long dataStart = checked(packageHeaderSize + itemHeaderSize);
 
+        long payloadSize = 0;
+        foreach (SegmentRecord segment in segments)
+        {
+            if ((ulong)segment.StoredData.LongLength != segment.StorageSize)
+            {
+                throw new InvalidDataException(
+                    "segment storage size does not match copied payload");
+            }
+
+            payloadSize = checked(
+                payloadSize + (long)segment.StorageSize);
+        }
+
+        long totalFileSize = checked(dataStart + payloadSize);
+        if (dataStart - packageHeaderSize > uint.MaxValue)
+        {
+            throw new InvalidDataException(
+                "output TPAC metadata region is too large");
+        }
+
+        string? directory = Path.GetDirectoryName(output);
+        if (string.IsNullOrWhiteSpace(directory))
+            throw new InvalidOperationException("Output directory missing");
+
+        Directory.CreateDirectory(directory);
+
+        string temp =
+            output + ".tmp." + Environment.ProcessId + "." + Guid.NewGuid().ToString("N");
+
+        try
+        {
+            using (FileStream fs =
+                   new(
+                       temp,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None))
+            using (BinaryWriter bw =
+                   new(fs, Encoding.UTF8, leaveOpen: false))
+            {
+                bw.Write(0x43415054u);
+                bw.Write(packageVersion);
+                bw.Write(OutputPackageGuid.ToByteArray());
+                bw.Write(1); // resource count
+
+                // TPAC v1/v2 stores the start of external data relative to
+                // the end of the fixed 36-byte package header.
+                bw.Write(checked((uint)(dataStart - packageHeaderSize)));
+                bw.Write(0u);
+
+                bw.Write(AnimationClipType.ToByteArray());
+                bw.Write(OutputAssetGuid.ToByteArray());
+                if (packageVersion >= 2)
+                    bw.Write(assetVersion);
+
+                WriteSizedString(bw, OutputClip);
+                bw.Write((ulong)metadata.Length);
+                bw.Write(metadata);
+                bw.Write(0L); // metadata checksum
+
+                bw.Write(segments.Count);
+
+                ulong nextSegmentOffset = checked((ulong)dataStart);
+                foreach (SegmentRecord segment in segments)
+                {
+                    bw.Write(nextSegmentOffset);
+                    bw.Write(segment.ActualSize);
+                    bw.Write(segment.StorageSize);
+
+                    // This segment now belongs to the cloned AnimationClip.
+                    bw.Write(OutputAssetGuid.ToByteArray());
+                    bw.Write(segment.TypeGuid.ToByteArray());
+                    bw.Write(segment.UnknownUlong);
+                    bw.Write(segment.UnknownUint);
+                    bw.Write(segment.StorageFormat);
+
+                    nextSegmentOffset = checked(
+                        nextSegmentOffset + segment.StorageSize);
+                }
+
+                bw.Write(dependencyCount);
+                bw.Write(dependencies);
+
+                if (fs.Position != dataStart)
+                {
+                    throw new InvalidDataException(
+                        "generated TPAC header size mismatch");
+                }
+
+                foreach (SegmentRecord segment in segments)
+                    bw.Write(segment.StoredData);
+
+                if (fs.Position != totalFileSize)
+                {
+                    throw new InvalidDataException(
+                        "generated TPAC file size mismatch");
+                }
+            }
+
+            ValidateGeneratedPackage(
+                temp,
+                metadata.Length,
+                dependencyCount,
+                segments);
+
+            // The MSBuild target can be reached by both inner target frameworks.
+            // Publish atomically; if another process won the race, keep its valid file.
+            if (File.Exists(output))
+            {
+                File.Delete(temp);
+                return;
+            }
+
+            File.Move(temp, output);
+        }
+        finally
+        {
+            if (File.Exists(temp))
+                File.Delete(temp);
+        }
+    }
+
+    private static void ValidateGeneratedPackage(
+        string path,
+        int expectedMetadataLength,
+        int expectedDependencyCount,
+        IReadOnlyList<SegmentRecord> expectedSegments)
+    {
         using FileStream fs =
-            File.Create(output);
-        using BinaryWriter bw =
+            File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using BinaryReader br =
             new(fs, Encoding.UTF8, leaveOpen: false);
 
-        bw.Write(0x43415054u);
-        bw.Write(packageVersion);
-        bw.Write(OutputPackageGuid.ToByteArray());
-        bw.Write(1); // resource count
-        bw.Write(checked((uint)(totalSize - headerSize)));
-        bw.Write(0u);
+        if (br.ReadUInt32() != 0x43415054u)
+            throw new InvalidDataException("generated TPAC has invalid magic");
 
-        bw.Write(AnimationClipType.ToByteArray());
-        bw.Write(OutputAssetGuid.ToByteArray());
-        if (packageVersion >= 2)
-            bw.Write(assetVersion);
+        int version = br.ReadInt32();
+        if (version is not (1 or 2))
+            throw new InvalidDataException("generated TPAC has invalid version");
 
-        WriteSizedString(bw, OutputClip);
-        bw.Write((ulong)metadata.Length);
-        bw.Write(metadata);
-        bw.Write(0L); // metadata checksum
-        bw.Write(0); // no external data segments
-        bw.Write(dependencyCount);
-        bw.Write(dependencies);
+        br.ReadBytes(16);
+        if (br.ReadInt32() != 1)
+            throw new InvalidDataException("generated TPAC resource count is not 1");
+
+        uint relativeDataStart = br.ReadUInt32();
+        br.ReadUInt32();
+
+        Guid typeGuid = new(br.ReadBytes(16));
+        Guid assetGuid = new(br.ReadBytes(16));
+        if (typeGuid != AnimationClipType || assetGuid != OutputAssetGuid)
+            throw new InvalidDataException("generated TPAC clip identity mismatch");
+
+        if (version >= 2)
+            br.ReadInt32();
+
+        string name = ReadSizedString(br);
+        if (!string.Equals(name, OutputClip, StringComparison.Ordinal))
+            throw new InvalidDataException("generated TPAC clip name mismatch");
+
+        ulong metadataSize = br.ReadUInt64();
+        if (metadataSize != (ulong)expectedMetadataLength)
+            throw new InvalidDataException("generated TPAC metadata size mismatch");
+
+        br.BaseStream.Seek((long)metadataSize, SeekOrigin.Current);
+        br.ReadInt64();
+
+        int segmentCount = br.ReadInt32();
+        if (segmentCount != expectedSegments.Count)
+            throw new InvalidDataException("generated TPAC segment count mismatch");
+
+        ulong expectedOffset = checked(
+            (ulong)packageHeaderSizeForValidation(relativeDataStart));
+
+        for (int i = 0; i < segmentCount; i++)
+        {
+            ulong offset = br.ReadUInt64();
+            ulong actualSize = br.ReadUInt64();
+            ulong storageSize = br.ReadUInt64();
+            Guid ownerGuid = new(br.ReadBytes(16));
+            Guid segmentTypeGuid = new(br.ReadBytes(16));
+            ulong unknownUlong = br.ReadUInt64();
+            uint unknownUint = br.ReadUInt32();
+            byte storageFormat = br.ReadByte();
+
+            SegmentRecord expected = expectedSegments[i];
+
+            if (offset != expectedOffset ||
+                actualSize != expected.ActualSize ||
+                storageSize != expected.StorageSize ||
+                ownerGuid != OutputAssetGuid ||
+                segmentTypeGuid != expected.TypeGuid ||
+                unknownUlong != expected.UnknownUlong ||
+                unknownUint != expected.UnknownUint ||
+                storageFormat != expected.StorageFormat)
+            {
+                throw new InvalidDataException(
+                    "generated TPAC segment descriptor mismatch");
+            }
+
+            expectedOffset = checked(expectedOffset + storageSize);
+        }
+
+        int dependencyCount = br.ReadInt32();
+        if (dependencyCount != expectedDependencyCount)
+            throw new InvalidDataException("generated TPAC dependency count mismatch");
+
+        br.BaseStream.Seek(
+            checked((long)dependencyCount * 48),
+            SeekOrigin.Current);
+
+        long expectedDataStart =
+            checked(36L + relativeDataStart);
+
+        if (br.BaseStream.Position != expectedDataStart)
+            throw new InvalidDataException("generated TPAC data offset mismatch");
+
+        for (int i = 0; i < expectedSegments.Count; i++)
+        {
+            SegmentRecord expected = expectedSegments[i];
+            byte[] stored =
+                br.ReadBytes(checked((int)expected.StorageSize));
+
+            if (!stored.AsSpan().SequenceEqual(expected.StoredData))
+            {
+                throw new InvalidDataException(
+                    "generated TPAC segment payload mismatch");
+            }
+        }
+
+        static long packageHeaderSizeForValidation(uint relativeDataStart)
+        {
+            return checked(36L + relativeDataStart);
+        }
     }
 
     private static string ReadSizedString(BinaryReader br)

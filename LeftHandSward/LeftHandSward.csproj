@@ -71,8 +71,10 @@
   </ItemGroup>
 
   <Target Name="GenerateLeftHandAttackClip"
-          BeforeTargets="PrepareForBuild"
-          Condition="'$(GameFolder)' != '' and Exists('$(GameFolder)\Modules\Native\ModuleData\action_sets.xml') and !Exists('$(MSBuildProjectDirectory)\_Module\AssetPackages\left_hand_sward_anm.tpac')">
+          BeforeTargets="DispatchToInnerBuilds;PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(GameFolder)' != '' and Exists('$(GameFolder)\Modules\Native\ModuleData\action_sets.xml')"
+          Inputs="$(MSBuildProjectDirectory)\..\tools\LeftHandClipBuilder\Program.cs;$(MSBuildProjectDirectory)\..\tools\LeftHandClipBuilder\LeftHandClipBuilder.csproj;$(GameFolder)\Modules\Native\ModuleData\action_sets.xml"
+          Outputs="$(MSBuildProjectDirectory)\_Module\AssetPackages\left_hand_sward_anm.tpac">
     <Message Importance="high" Text="Generating native left-hand melee AnimationClip override package..." />
     <Exec Command="dotnet run --project &quot;$(MSBuildProjectDirectory)\..\tools\LeftHandClipBuilder\LeftHandClipBuilder.csproj&quot; --configuration Release --no-launch-profile -- &quot;$(GameFolder)&quot; &quot;$(MSBuildProjectDirectory)\_Module\AssetPackages\left_hand_sward_anm.tpac&quot;" />
   </Target>
