@@ -1308,7 +1308,7 @@ namespace LeftHandSward.Skills
             }
 
             float duration = Math.Max(0.01f, state.SweepEndAt - state.SweepStartAt);
-            float progress = MathF.Clamp(
+            float progress = TaleWorlds.Library.MathF.Clamp(
                 (now - state.SweepStartAt) / duration,
                 0f,
                 1f);
@@ -1336,17 +1336,17 @@ namespace LeftHandSward.Skills
             center.z -= 0.55f;
             center += right * -0.18f;
 
-            float weaponLength = MathF.Clamp(
+            float weaponLength = TaleWorlds.Library.MathF.Clamp(
                 usage.WeaponLength * 0.01f,
                 0.55f,
                 1.8f);
             float reach = 0.42f + weaponLength;
 
             // Left-to-right horizontal arc in front of the player.
-            float angle = (-75f + 150f * progress) * (MathF.PI / 180f);
+            float angle = (-75f + 150f * progress) * (TaleWorlds.Library.MathF.PI / 180f);
             Vec3 sweepDirection =
-                forward * MathF.Cos(angle)
-                + right * MathF.Sin(angle);
+                forward * TaleWorlds.Library.MathF.Cos(angle)
+                + right * TaleWorlds.Library.MathF.Sin(angle);
             sweepDirection.Normalize();
 
             Vec3 tip = center + sweepDirection * reach;
@@ -1439,7 +1439,7 @@ namespace LeftHandSward.Skills
             float length = delta.Length;
             if (length > 0.0001f)
             {
-                float t = MathF.Clamp(collisionDistance / length, 0f, 1f);
+                float t = TaleWorlds.Library.MathF.Clamp(collisionDistance / length, 0f, 1f);
                 hitPoint = source + delta * t;
             }
 
@@ -1472,7 +1472,7 @@ namespace LeftHandSward.Skills
             // number because this direct Blow path does not run the full native melee
             // armor/momentum calculation yet.
             int rawSwingDamage = Math.Max(1, usage.SwingDamage);
-            int damage = Math.Max(6, Math.Min(70, (int)MathF.Round(rawSwingDamage * 0.55f)));
+            int damage = Math.Max(6, Math.Min(70, (int)TaleWorlds.Library.MathF.Round(rawSwingDamage * 0.55f)));
 
             Vec3 blowDirection = victim.Position - attacker.Position;
             blowDirection.z = 0f;
