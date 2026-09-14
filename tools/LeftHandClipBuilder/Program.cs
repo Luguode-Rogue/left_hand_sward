@@ -650,15 +650,10 @@ internal static class Program
                 dependencyCount,
                 segments);
 
-            // The MSBuild target can be reached by both inner target frameworks.
-            // Publish atomically; if another process won the race, keep its valid file.
-            if (File.Exists(output))
-            {
-                File.Delete(temp);
-                return;
-            }
-
-            File.Move(temp, output);
+            // The generated package is a build artifact. Always replace a stale copy
+            // when the builder actually runs; otherwise an old TPAC can silently survive
+            // source/XML changes and invalidate animation tests.
+            File.Move(temp, output, true);
         }
         finally
         {
