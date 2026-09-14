@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("实验4-原生右手攻击镜像到左侧");
-            Description = new TextObject("完全复用实验1原生melee pipeline；不创建任何命中或Blow。攻击期间把原生右手动作姿势镜像给左手，并把真实主手WeaponEntity镜像到身体左侧，验证Bannerlord原生武器collider是否随实体/骨骼移动。");
+            Text = new TextObject("实验4-扫描原生左手攻击动作");
+            Description = new TextObject("恢复稳定的OffHandItemBone左手武器模型，不再移动真实WeaponEntity或强制镜像IK。复用实验1原生攻击仅作观察，并扫描当前ActionSet中自带anf_use_left_hand_during_attack的原版动作，寻找可直接复用的原生左手collider载体。");
         }
 
         public override bool Activate(Agent casterAgent)

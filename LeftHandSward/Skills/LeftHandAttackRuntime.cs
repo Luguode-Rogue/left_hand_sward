@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using TaleWorlds.Core;
 using TaleWorlds.Engine;
 using TaleWorlds.Library;
@@ -29,26 +30,15 @@ namespace LeftHandSward.Skills
         private sealed class CustomLeftHandAttackState
         {
             public Agent Agent;
-            public MissionWeapon Weapon;
-            public EquipmentIndex SourceSlot;
             public string SkillId;
-            public Skeleton Skeleton;
-            public WeakGameEntity WeaponEntity;
-            public sbyte LeftHandBone;
-            public sbyte RightHandBone;
-            public sbyte MainItemBone;
-            public MatrixFrame RightHandRestLocal;
-            public MatrixFrame WeaponGripLocal;
-            public float StartedAt;
             public float TimeoutAt;
             public bool SawNativeMelee;
-            public bool MirrorLogged;
-            public bool IkResultLogged;
         }
 
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
         private static readonly List<NativeBoneAttachmentState> _nativeBoneAttachments = new List<NativeBoneAttachmentState>();
         private static CustomLeftHandAttackState _customLeftHandAttack;
+        private static readonly HashSet<string> _scannedLeftHandActionSets = new HashSet<string>(StringComparer.Ordinal);
 
         private static Agent _offHandProbeAgent;
         private static EquipmentIndex _offHandProbePreviousIndex = EquipmentIndex.None;
@@ -685,7 +675,7 @@ namespace LeftHandSward.Skills
 
             if (_customLeftHandAttack != null)
             {
-                result = "上一轮左手镜像攻击尚未结束";
+                result = "上一轮原生攻击观察尚未结束";
                 return false;
             }
 
@@ -706,87 +696,35 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            if (agent.AgentVisuals == null || agent.Monster == null)
+            // Visual only. This is the already validated safe path:
+            // attach the current weapon to OffHandItemBone using Identity.
+            if (!AttachCurrentWeaponToLeftItemBone(
+                    agent,
+                    false,
+                    1.5f,
+                    out string visualResult))
             {
-                result = "AgentVisuals/Monster 不可用";
+                result = "左手模型挂载失败: " + visualResult;
                 return false;
             }
 
-            Skeleton skeleton = agent.AgentVisuals.GetSkeleton();
-            if (skeleton == null || !skeleton.IsValid)
-            {
-                result = "Skeleton 无效";
-                return false;
-            }
+            ScanNativeLeftHandActionCandidates(agent, skillId);
 
-            sbyte leftHandBone = agent.Monster.OffHandBoneIndex;
-            sbyte rightHandBone = agent.Monster.MainHandBoneIndex;
-            sbyte mainItemBone = agent.Monster.MainHandItemBoneIndex;
-
-            if (leftHandBone < 0 ||
-                rightHandBone < 0 ||
-                mainItemBone < 0)
-            {
-                result = "左右手/MainHandItemBone 骨骼索引无效";
-                return false;
-            }
-
-            WeakGameEntity weaponEntity =
-                agent.GetWeaponEntityFromEquipmentSlot(primarySlot);
-            if (!weaponEntity.IsValid)
-            {
-                result = "当前主手 WeaponEntity 无效";
-                return false;
-            }
-
-            agent.ClearHandInverseKinematics();
-            skeleton.ForceUpdateBoneFrames();
-
-            MatrixFrame visualsGlobal = agent.AgentVisuals.GetGlobalFrame();
-            MatrixFrame rightHandWorld =
-                visualsGlobal *
-                skeleton.GetBoneEntitialFrameWithIndex(rightHandBone);
-            MatrixFrame mainItemWorld =
-                visualsGlobal *
-                skeleton.GetBoneEntitialFrameWithIndex(mainItemBone);
-            MatrixFrame weaponWorld = weaponEntity.GetGlobalFrame();
-
-            MatrixFrame rightHandRestLocal =
-                visualsGlobal.TransformToLocalNonOrthogonal(rightHandWorld);
-            MatrixFrame weaponGripLocal =
-                mainItemWorld.TransformToLocalNonOrthogonal(weaponWorld);
-
-            float now = agent.Mission.CurrentTime;
             _customLeftHandAttack = new CustomLeftHandAttackState
             {
                 Agent = agent,
-                Weapon = nativeWeapon,
-                SourceSlot = primarySlot,
                 SkillId = skillId,
-                Skeleton = skeleton,
-                WeaponEntity = weaponEntity,
-                LeftHandBone = leftHandBone,
-                RightHandBone = rightHandBone,
-                MainItemBone = mainItemBone,
-                RightHandRestLocal = rightHandRestLocal,
-                WeaponGripLocal = weaponGripLocal,
-                StartedAt = now,
-                TimeoutAt = now + 2.5f,
-                SawNativeMelee = false,
-                MirrorLogged = false,
-                IkResultLogged = false
+                TimeoutAt = agent.Mission.CurrentTime + 2.5f,
+                SawNativeMelee = false
             };
 
             LeftHandSwardLog.Info(
-                "LeftHandMirror",
+                "LeftHandActionProbe",
                 "BEGIN"
                 + " skill=" + skillId
                 + " slot=" + primarySlot
                 + " weapon=" + DescribeMissionWeapon(nativeWeapon)
-                + " rightHandBone=" + rightHandBone
-                + " leftHandBone=" + leftHandBone
-                + " mainItemBone=" + mainItemBone
-                + " gripLocal={" + DescribeFrame(weaponGripLocal) + "}");
+                + " visual={" + visualResult + "}");
 
             if (!QueueNativeAttack(
                     agent,
@@ -800,11 +738,11 @@ namespace LeftHandSward.Skills
             }
 
             LeftHandSwardLog.Info(
-                "LeftHandMirror",
+                "LeftHandActionProbe",
                 "NATIVE PIPELINE QUEUED via experiment-1"
                 + " result={" + nativeResult + "}");
 
-            result = "已启动原生右手攻击镜像实验；命中仍完全由 Bannerlord 原生 melee pipeline 负责";
+            result = "左手模型已恢复为稳定挂载；本轮只扫描原生左手攻击 action，不再修改武器实体或IK";
             return true;
         }
 
@@ -1069,13 +1007,6 @@ namespace LeftHandSward.Skills
             _queuedNativeAttackSkillId = null;
             _queuedNativeAttackFlag = Agent.MovementControlFlag.None;
 
-            if (_customLeftHandAttack != null)
-            {
-                if (_customLeftHandAttack.Agent != null)
-                    _customLeftHandAttack.Agent.ClearHandInverseKinematics();
-
-                RestoreMirroredMainWeapon(_customLeftHandAttack);
-            }
             _customLeftHandAttack = null;
             ClearMeleeObservation();
 
@@ -1399,21 +1330,17 @@ namespace LeftHandSward.Skills
             Agent agent = state.Agent;
             if (agent == null ||
                 agent.State != AgentState.Active ||
-                mission.MainAgent != agent ||
-                state.Skeleton == null ||
-                !state.Skeleton.IsValid ||
-                !state.WeaponEntity.IsValid)
+                mission.MainAgent != agent)
             {
-                EndCustomLeftHandAttack("invalid agent/skeleton/weapon entity");
+                EndCustomLeftHandAttack("invalid agent");
                 return;
             }
 
-            float now = mission.CurrentTime;
-            if (now >= state.TimeoutAt)
+            if (mission.CurrentTime >= state.TimeoutAt)
             {
                 EndCustomLeftHandAttack(
                     state.SawNativeMelee
-                        ? "native melee mirror timeout"
+                        ? "native melee observation timeout"
                         : "native melee never started");
                 return;
             }
@@ -1425,151 +1352,114 @@ namespace LeftHandSward.Skills
                 actionType == Agent.ActionCodeType.ParriedMelee ||
                 actionType == Agent.ActionCodeType.BlockedMelee;
 
-            if (!nativeMelee)
+            if (nativeMelee)
             {
-                if (state.SawNativeMelee)
-                {
-                    EndCustomLeftHandAttack(
-                        "native melee finished type=" + actionType);
-                }
+                state.SawNativeMelee = true;
                 return;
             }
 
-            state.SawNativeMelee = true;
-
-            state.Skeleton.ForceUpdateBoneFrames();
-            MatrixFrame visualsGlobal = agent.AgentVisuals.GetGlobalFrame();
-
-            // Read the ORIGINAL native right-hand combat pose directly from action
-            // channel 1, not from the already IK-modified final skeleton.
-            MatrixFrame nativeRightHandLocal =
-                state.Skeleton.GetBoneEntitialFrameAtChannel(
-                    1,
-                    state.RightHandBone);
-            MatrixFrame nativeMainItemLocal =
-                state.Skeleton.GetBoneEntitialFrameAtChannel(
-                    1,
-                    state.MainItemBone);
-
-            MatrixFrame mirroredLeftHandLocal =
-                MirrorFrameAcrossLocalX(nativeRightHandLocal);
-            MatrixFrame mirroredLeftHandWorld =
-                visualsGlobal * mirroredLeftHandLocal;
-
-            // Keep the real right hand near its pre-attack body-local position.
-            // The left hand receives the mirrored native attack pose.
-            MatrixFrame rightHandTargetWorld =
-                visualsGlobal * state.RightHandRestLocal;
-
-            bool ikAccepted = agent.SetHandInverseKinematicsFrame(
-                mirroredLeftHandWorld,
-                rightHandTargetWorld);
-
-            if (!state.IkResultLogged)
-            {
-                state.IkResultLogged = true;
-                LeftHandSwardLog.Info(
-                    "LeftHandMirror",
-                    "IK RETURN accepted=" + ikAccepted
-                    + " actionType=" + actionType
-                    + " action=" + agent.GetCurrentAction(1).GetName());
-            }
-
-            if (!ikAccepted)
+            if (state.SawNativeMelee)
             {
                 EndCustomLeftHandAttack(
-                    "SetHandInverseKinematicsFrame rejected");
+                    "native melee finished type=" + actionType);
+            }
+        }
+
+        private static void ScanNativeLeftHandActionCandidates(
+            Agent agent,
+            string skillId)
+        {
+            if (agent == null)
+                return;
+
+            MBActionSet actionSet = agent.ActionSet;
+            if (!actionSet.IsValid)
+            {
+                LeftHandSwardLog.Warn(
+                    "LeftHandActionScan",
+                    "invalid action set skill=" + (skillId ?? "null"));
                 return;
             }
 
-            // Reconstruct where the real MainHand weapon would have been for this
-            // native action frame, then mirror that exact world transform across the
-            // agent's local X axis. We move the REAL equipped WeaponEntity, not a
-            // visual copy. isTeleportation=false preserves previous/current frames
-            // for the engine's own sweep/collision test.
-            MatrixFrame nativeMainItemWorld =
-                visualsGlobal * nativeMainItemLocal;
-            MatrixFrame nativeWeaponWorld =
-                nativeMainItemWorld * state.WeaponGripLocal;
-            MatrixFrame mirroredWeaponWorld =
-                MirrorWorldFrameAcrossAgent(
-                    nativeWeaponWorld,
-                    visualsGlobal);
-
-            state.WeaponEntity.SetGlobalFrame(
-                mirroredWeaponWorld,
-                false);
-
-            if (!state.MirrorLogged)
+            string actionSetName = actionSet.GetName();
+            if (!_scannedLeftHandActionSets.Add(actionSetName))
             {
-                state.MirrorLogged = true;
                 LeftHandSwardLog.Info(
-                    "LeftHandMirror",
-                    "MIRROR APPLY"
-                    + " actionType=" + actionType
-                    + " action=" + agent.GetCurrentAction(1).GetName()
-                    + " sourceWeapon={" + DescribeFrame(nativeWeaponWorld) + "}"
-                    + " mirroredWeapon={" + DescribeFrame(mirroredWeaponWorld) + "}");
-            }
-        }
-
-        private static MatrixFrame MirrorWorldFrameAcrossAgent(
-            MatrixFrame worldFrame,
-            MatrixFrame agentWorld)
-        {
-            MatrixFrame local =
-                agentWorld.TransformToLocalNonOrthogonal(worldFrame);
-            MatrixFrame mirroredLocal =
-                MirrorFrameAcrossLocalX(local);
-            return agentWorld * mirroredLocal;
-        }
-
-        private static MatrixFrame MirrorFrameAcrossLocalX(
-            MatrixFrame frame)
-        {
-            // Reflection of a rigid transform across the local YZ plane:
-            // T' = M * T * M, M = diag(-1, 1, 1).
-            // Applying M on both sides keeps the resulting rotation proper
-            // (determinant +1) while mirroring the motion left/right.
-            frame.origin.x = -frame.origin.x;
-
-            frame.rotation.s.y = -frame.rotation.s.y;
-            frame.rotation.s.z = -frame.rotation.s.z;
-
-            frame.rotation.f.x = -frame.rotation.f.x;
-            frame.rotation.u.x = -frame.rotation.u.x;
-
-            return frame;
-        }
-
-        private static void RestoreMirroredMainWeapon(
-            CustomLeftHandAttackState state)
-        {
-            if (state == null ||
-                state.Agent == null ||
-                state.Agent.State != AgentState.Active ||
-                state.Agent.AgentVisuals == null ||
-                state.Skeleton == null ||
-                !state.Skeleton.IsValid ||
-                !state.WeaponEntity.IsValid)
-            {
+                    "LeftHandActionScan",
+                    "SKIP already scanned actionSet=" + actionSetName);
                 return;
             }
 
-            state.Skeleton.ForceUpdateBoneFrames();
+            int checkedCount = 0;
+            int leftHandFlagCount = 0;
+            int releaseMeleeCount = 0;
 
-            MatrixFrame visualsGlobal =
-                state.Agent.AgentVisuals.GetGlobalFrame();
-            MatrixFrame mainItemWorld =
-                visualsGlobal *
-                state.Skeleton.GetBoneEntitialFrameWithIndex(
-                    state.MainItemBone);
-            MatrixFrame nativeWeaponWorld =
-                mainItemWorld * state.WeaponGripLocal;
+            FieldInfo[] fields = typeof(ActionIndexCache).GetFields(
+                BindingFlags.Public | BindingFlags.Static);
 
-            state.WeaponEntity.SetGlobalFrame(
-                nativeWeaponWorld,
-                true);
+            for (int i = 0; i < fields.Length; i++)
+            {
+                FieldInfo field = fields[i];
+                if (field.FieldType != typeof(ActionIndexCache))
+                    continue;
+
+                object boxed = field.GetValue(null);
+                if (!(boxed is ActionIndexCache))
+                    continue;
+
+                ActionIndexCache action = (ActionIndexCache)boxed;
+                if (action == ActionIndexCache.act_none)
+                    continue;
+
+                if (!MBActionSet.CheckActionAnimationClipExists(
+                        actionSet,
+                        action))
+                {
+                    continue;
+                }
+
+                checkedCount++;
+
+                AnimFlags flags = MBActionSet.GetActionAnimationFlags(
+                    actionSet,
+                    action);
+
+                if ((flags & AnimFlags.anf_use_left_hand_during_attack) == 0)
+                    continue;
+
+                leftHandFlagCount++;
+
+                Agent.ActionCodeType actionType =
+                    MBAnimation.GetActionType(action);
+
+                if (actionType == Agent.ActionCodeType.ReleaseMelee)
+                    releaseMeleeCount++;
+
+                LeftHandSwardLog.Info(
+                    "LeftHandActionScan",
+                    "CANDIDATE"
+                    + " actionSet=" + actionSetName
+                    + " action=" + action.GetName()
+                    + " type=" + actionType
+                    + " animation=" + MBActionSet.GetActionAnimationName(
+                        actionSet,
+                        action)
+                    + " flags=" + flags);
+            }
+
+            LeftHandSwardLog.Info(
+                "LeftHandActionScan",
+                "SUMMARY"
+                + " actionSet=" + actionSetName
+                + " checked=" + checkedCount
+                + " leftHandFlag=" + leftHandFlagCount
+                + " releaseMelee=" + releaseMeleeCount);
+
+            Report(
+                "原生左手 action 扫描完成: actionSet="
+                + actionSetName
+                + " leftHandFlag=" + leftHandFlagCount
+                + " releaseMelee=" + releaseMeleeCount);
         }
 
         private static void EndCustomLeftHandAttack(string reason)
@@ -1578,13 +1468,8 @@ namespace LeftHandSward.Skills
             if (state == null)
                 return;
 
-            if (state.Agent != null)
-                state.Agent.ClearHandInverseKinematics();
-
-            RestoreMirroredMainWeapon(state);
-
             LeftHandSwardLog.Info(
-                "LeftHandMirror",
+                "LeftHandActionProbe",
                 "END reason=" + reason
                 + " sawNativeMelee=" + state.SawNativeMelee);
 
