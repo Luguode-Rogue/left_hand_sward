@@ -782,13 +782,14 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            // Left-hand weapon is now visual-only. Clone the live current main-hand
-            // weapon entity to l_hand instead of asking Bannerlord to wield a second
-            // weapon in OffHand. This avoids native usage switching for two-handed
-            // weapons and removes all secondary-slot weapon restrictions.
-            RemoveVisualClone(agent);
-            if (!AddLeftHandVisualClone(
+            // Reuse the experiment-3 visual path verbatim. Real-game testing
+            // already proved that Agent.AttachWeaponToBone + Identity on
+            // Monster.OffHandItemBoneIndex gives the correct left-hand weapon
+            // placement. Keep it visual-only: no native OffHand wield state is made.
+            RemoveNativeBoneAttachment(agent);
+            if (!AttachCurrentWeaponToLeftItemBone(
                     agent,
+                    false,
                     2.25f,
                     out string visualResult))
             {
@@ -811,7 +812,7 @@ namespace LeftHandSward.Skills
                 + " skill=" + skillId
                 + " primary=" + _leftHandRewritePrimarySlot
                 + " mainWeapon=" + DescribeMissionWeapon(mainWeapon)
-                + " leftVisual=main-hand-clone"
+                + " leftVisual=experiment3-native-bone-attach"
                 + " customRelease=auto-1H/2H-weapon-combat");
 
             bool queued = QueueNativeAttack(
@@ -824,14 +825,14 @@ namespace LeftHandSward.Skills
             {
                 AbortNativeLeftHandRewrite(
                     "native input queue failed: " + queueResult);
-                RemoveVisualClone(agent);
+                RemoveNativeBoneAttachment(agent);
                 result = queueResult;
                 return false;
             }
 
             result =
-                "已复制当前主手武器模型到左手并排队原生 melee；"
-                + "不建立 OffHand，不限制单手/双手；"
+                "已用实验3的原生 OffHandItemBone 挂载把当前主手武器显示到左手，并排队原生 melee；"
+                + "不建立真实 OffHand，不限制单手/双手；"
                 + "ReleaseMelee 使用 Native OffHand 盾击左臂 motion，但 CombatParameter 按当前 1H/2H 武器 Release 选择";
             return true;
         }
@@ -1066,63 +1067,6 @@ namespace LeftHandSward.Skills
                 + " result=" + collisionData.CollisionResult
                 + " blockedWithShield=" + collisionData.AttackBlockedWithShield
                 + " victim=" + SafeAgentName(victim));
-        }
-
-        public static bool StartNativeAlternativeAttackProbe(
-            Agent agent,
-            string skillId,
-            out string result)
-        {
-            if (agent == null || agent.State != AgentState.Active)
-            {
-                result = "Agent 不可用";
-                return false;
-            }
-
-            if (agent.Mission == null || agent.Mission.MainAgent != agent)
-            {
-                result = "原生 AlternativeAttack 探针只支持 MainAgent";
-                LeftHandSwardLog.Warn("AlternativeAttack", result);
-                return false;
-            }
-
-            if (_pendingAttackAgent != null)
-            {
-                result = "上一轮 melee 观察尚未结束";
-                LeftHandSwardLog.Warn("AlternativeAttack", result);
-                return false;
-            }
-
-            LeftHandSwardLog.Info(
-                "AlternativeAttack",
-                "KICKCLEAR BEGIN"
-                + " skill=" + skillId
-                + " state={" + DescribeAgentAction(agent) + "}"
-                + " hands={" + DescribeHands(agent) + "}");
-
-            BeginMeleeObservation(agent, skillId, 2.5f);
-
-            bool accepted = agent.KickClear();
-
-            LeftHandSwardLog.Info(
-                "AlternativeAttack",
-                "KICKCLEAR RETURN"
-                + " accepted=" + accepted
-                + " actionType=" + agent.GetCurrentActionType(1)
-                + " action=" + agent.GetCurrentAction(1).GetName()
-                + " hands={" + DescribeHands(agent) + "}");
-
-            if (!accepted)
-            {
-                ClearMeleeObservation();
-                result = "KickClear 被原生状态机拒绝";
-                return false;
-            }
-
-            result =
-                "已调用原生 KickClear；根据装备状态观察 Kick / WeaponBash / ShieldBash 的 "
-                + "NativeBlow slot、AttackBoneIndex 与 IsAlternativeAttack";
-            return true;
         }
 
         public static void Report(string message)
