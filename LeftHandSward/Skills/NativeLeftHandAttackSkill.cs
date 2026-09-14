@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("实验4-原生左手Collider攻击");
-            Description = new TextObject("建立真实OffHand；攻击仍由实验1的MovementFlags进入原生melee状态机。进入ReleaseMelee后切到自定义actt_release_melee action，其AnimationClip带use_left_hand_during_attack。当前阶段只验证左手collider与原生Blow/weapon slot，不再把left_stance当作左手机制。");
+            Text = new TextObject("实验4-左臂原生命中");
+            Description = new TextObject("项目主线实验：建立真实OffHand剑，仍由MovementFlags进入原生melee状态机；ReleaseMelee切到以原版OffHand盾击为motion donor的左臂动作，并带use_left_hand_during_attack。成功标准是左臂/左手剑真实运动并由左侧动作触发原生命中；Blow继续按主手武器计算伤害也可接受。");
         }
 
         public override bool Activate(Agent casterAgent)
