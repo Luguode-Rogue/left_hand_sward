@@ -7,8 +7,11 @@ namespace LeftHandSward
     /// <summary>
     /// Runtime support owned entirely by this extension mod.
     /// New_ZZZF only provides the skill framework and activation pipeline.
+    ///
+    /// Native melee attacks are injected through IPlayerInputEffector, matching the
+    /// already-validated NativeMeleeCollisionTest path from New_ZZZF.
     /// </summary>
-    public sealed class LeftHandAttackMissionBehavior : MissionBehavior
+    public sealed class LeftHandAttackMissionBehavior : MissionBehavior, IPlayerInputEffector
     {
         public LeftHandAttackMissionBehavior()
         {
@@ -17,6 +20,11 @@ namespace LeftHandSward
         }
 
         public override MissionBehaviorType BehaviorType => MissionBehaviorType.Other;
+
+        public Agent.EventControlFlag OnCollectPlayerEventControlFlags()
+        {
+            return LeftHandAttackRuntime.CollectPlayerInput(Mission);
+        }
 
         public override void OnMissionTick(float dt)
         {
@@ -31,11 +39,17 @@ namespace LeftHandSward
             AttackCollisionData collisionData)
         {
             base.OnMeleeHit(attacker, victim, isCanceled, collisionData);
-            LeftHandSwardLog.Info(
-                "Mission",
-                "OnMeleeHit canceled=" + isCanceled
-                + " dir=" + collisionData.AttackDirection
-                + " progress=" + collisionData.AttackProgress);
+
+            if (attacker == Mission?.MainAgent)
+            {
+                LeftHandSwardLog.Info(
+                    "Mission",
+                    "OnMeleeHit player"
+                    + " canceled=" + isCanceled
+                    + " dir=" + collisionData.AttackDirection
+                    + " progress=" + collisionData.AttackProgress);
+            }
+
             LeftHandAttackRuntime.NotifyMeleeHit(attacker, victim, isCanceled, collisionData);
         }
 
@@ -46,7 +60,13 @@ namespace LeftHandSward
             KillingBlow killingBlow)
         {
             base.OnAgentRemoved(affectedAgent, affectorAgent, agentState, killingBlow);
-            LeftHandSwardLog.Info("Mission", "OnAgentRemoved state=" + agentState);
+
+            // Avoid the previous end-of-battle log flood. Only the experiment agent matters.
+            if (affectedAgent == Mission?.MainAgent)
+            {
+                LeftHandSwardLog.Info("Mission", "MainAgent removed state=" + agentState);
+            }
+
             LeftHandAttackRuntime.RemoveVisualClone(affectedAgent);
         }
     }
