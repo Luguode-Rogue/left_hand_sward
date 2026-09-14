@@ -18,15 +18,7 @@ namespace LeftHandSward.Skills
             public float ExpireAt;
         }
 
-        private sealed class TemporaryOffhandState
-        {
-            public Agent Agent;
-            public EquipmentIndex Slot;
-            public ItemObject CloneItem;
-        }
-
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
-        private static TemporaryOffhandState _temporaryOffhand;
 
         // A SkillBase.Activate call can happen outside the exact input collection point.
         // Queue the request and inject it from IPlayerInputEffector on the next collection.
@@ -244,146 +236,6 @@ namespace LeftHandSward.Skills
             return true;
         }
 
-        public static bool EquipTemporaryOffhandClone(Agent agent, out string result)
-        {
-            if (!TryGetActiveMeleeWeapon(agent, out MissionWeapon sourceWeapon, out string error))
-            {
-                result = error;
-                return false;
-            }
-
-            RemoveTemporaryOffhand(agent);
-
-            EquipmentIndex targetSlot = FindEmptyWeaponSlot(agent);
-            if (targetSlot == EquipmentIndex.None)
-            {
-                result = "没有空武器槽可用于临时副手剑";
-                LeftHandSwardLog.Warn("OffhandEquip", result);
-                return false;
-            }
-
-            ItemObject sourceItem = sourceWeapon.Item;
-            ItemObject cloneItem = new ItemObject(sourceItem)
-            {
-                // Keep the same native WeaponKind. The clone only exists in managed
-                // mission state; it is not registered as a new campaign item.
-                Id = sourceItem.Id,
-                StringId = sourceItem.StringId + "_lhs_offhand_runtime"
-            };
-
-            cloneItem.Initialize();
-            cloneItem.IsReady = true;
-            cloneItem.SetItemFlagsForCosmetics(
-                sourceItem.ItemFlags | ItemFlags.HeldInOffHand);
-
-            MissionWeapon offhandWeapon = new MissionWeapon(
-                cloneItem,
-                sourceWeapon.ItemModifier,
-                sourceWeapon.Banner);
-
-            if (sourceWeapon.CurrentUsageIndex >= 0 &&
-                sourceWeapon.CurrentUsageIndex < offhandWeapon.WeaponsCount)
-            {
-                offhandWeapon.CurrentUsageIndex = sourceWeapon.CurrentUsageIndex;
-            }
-
-            offhandWeapon.ReloadPhase = sourceWeapon.ReloadPhase;
-
-            LeftHandSwardLog.Info(
-                "OffhandEquip",
-                "CALL EquipWeaponWithNewEntity BEGIN"
-                + " slot=" + targetSlot
-                + " sourceItem=" + sourceItem.StringId
-                + " sourceFlags=" + sourceItem.ItemFlags
-                + " cloneFlags=" + cloneItem.ItemFlags
-                + " usage=" + offhandWeapon.CurrentUsageItem.WeaponClass
-                + " before={" + DescribeHands(agent) + "}");
-
-            agent.EquipWeaponWithNewEntity(targetSlot, ref offhandWeapon);
-
-            LeftHandSwardLog.Info(
-                "OffhandEquip",
-                "CALL EquipWeaponWithNewEntity RETURN"
-                + " slot=" + targetSlot
-                + " state={" + DescribeHands(agent) + "}");
-
-            LeftHandSwardLog.Info(
-                "OffhandEquip",
-                "CALL TryToWieldWeaponInSlot BEGIN slot=" + targetSlot);
-
-            agent.TryToWieldWeaponInSlot(
-                targetSlot,
-                Agent.WeaponWieldActionType.Instant,
-                false);
-
-            LeftHandSwardLog.Info(
-                "OffhandEquip",
-                "CALL TryToWieldWeaponInSlot RETURN"
-                + " slot=" + targetSlot
-                + " state={" + DescribeHands(agent) + "}");
-
-            _temporaryOffhand = new TemporaryOffhandState
-            {
-                Agent = agent,
-                Slot = targetSlot,
-                CloneItem = cloneItem
-            };
-
-            _offhandProbeAgent = agent;
-            _offhandProbeUntil = agent.Mission.CurrentTime + 2f;
-            _lastOffhandProbeState = null;
-
-            result = "临时副手剑已装备到 " + targetSlot
-                     + "；等待 native 确认 offhandSlot";
-            return true;
-        }
-
-        public static void RemoveTemporaryOffhand(Agent agent)
-        {
-            TemporaryOffhandState state = _temporaryOffhand;
-            if (state == null)
-                return;
-
-            if (agent != null && state.Agent != agent)
-                return;
-
-            _temporaryOffhand = null;
-
-            Agent owner = state.Agent;
-            if (owner == null || owner.State != AgentState.Active)
-                return;
-
-            try
-            {
-                MissionWeapon equipped = owner.Equipment[state.Slot];
-                if (equipped.Item != state.CloneItem)
-                    return;
-
-                LeftHandSwardLog.Info(
-                    "OffhandEquip",
-                    "REMOVE BEGIN slot=" + state.Slot
-                    + " state={" + DescribeHands(owner) + "}");
-
-                if (owner.GetOffhandWieldedItemIndex() == state.Slot)
-                {
-                    owner.TryToSheathWeaponInHand(
-                        Agent.HandIndex.OffHand,
-                        Agent.WeaponWieldActionType.Instant);
-                }
-
-                owner.RemoveEquippedWeapon(state.Slot);
-
-                LeftHandSwardLog.Info(
-                    "OffhandEquip",
-                    "REMOVE RETURN slot=" + state.Slot
-                    + " state={" + DescribeHands(owner) + "}");
-            }
-            catch (Exception ex)
-            {
-                LeftHandSwardLog.Exception("OffhandEquip", ex);
-            }
-        }
-
         public static bool ProbeOffhand(Agent agent, bool cycleNativeOffhand, out string result)
         {
             if (agent == null || agent.State != AgentState.Active || agent.Mission == null)
@@ -497,7 +349,6 @@ namespace LeftHandSward.Skills
             for (int i = _visualClones.Count - 1; i >= 0; i--)
                 RemoveVisualCloneAt(i);
 
-            RemoveTemporaryOffhand(null);
 
             _queuedNativeAttackAgent = null;
             _queuedNativeAttackSkillId = null;
@@ -718,25 +569,6 @@ namespace LeftHandSward.Skills
             {
                 return "<name-error>";
             }
-        }
-
-        private static EquipmentIndex FindEmptyWeaponSlot(Agent agent)
-        {
-            if (agent == null || agent.Equipment == null)
-                return EquipmentIndex.None;
-
-            for (EquipmentIndex slot = EquipmentIndex.WeaponItemBeginSlot;
-                 slot < EquipmentIndex.ExtraWeaponSlot;
-                 slot++)
-            {
-                if (agent.Equipment[slot].IsEmpty)
-                    return slot;
-            }
-
-            if (agent.Equipment[EquipmentIndex.ExtraWeaponSlot].IsEmpty)
-                return EquipmentIndex.ExtraWeaponSlot;
-
-            return EquipmentIndex.None;
         }
 
         private static sbyte FindBoneIndex(Skeleton skeleton, string boneName)
