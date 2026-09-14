@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<action_types>
+  <action
+    name="act_lhs_release_slashright_1h"
+    type="actt_release_melee"
+    usage_direction="ud_attack_right"
+    action_stage="as_attack_release" />
+</action_types>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<action_sets>
+  <action_set
+    id="as_human_warrior"
+    skeleton="human_skeleton"
+    movement_system="bipedal">
+    <action
+      type="act_lhs_release_slashright_1h"
+      animation="lhs_release_slashright_1h_left_stance_clip" />
+  </action_set>
+</action_sets>

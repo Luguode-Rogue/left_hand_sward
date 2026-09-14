@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("实验4-原生MainHand左移攻击");
-            Description = new TextObject("把AnimationSystemData中的MainHand/OffHand骨骼角色交换，使真实主手武器和原生近战系统指向左手；用SkeletonPostIntegrateCallback把原版右手挥砍骨骼结果镜像到左臂并冻结右臂。攻击输入、碰撞、格挡、Blow和伤害仍全部走实验1的Bannerlord原生melee pipeline。");
+            Text = new TextObject("实验4-原生LeftStance左手攻击");
+            Description = new TextObject("建立真实OffHand并强制Bannerlord原生LeftStance；攻击仍由实验1的MovementFlags进入原生melee状态机。Release阶段切到同为actt_release_melee的左手action，其AnimationClip由构建工具从原版left_stance挥砍clip克隆，并烧入use_left_hand_during_attack。命中、格挡、Blow和伤害全部由Bannerlord原生combat system生成。");
         }
 
         public override bool Activate(Agent casterAgent)
