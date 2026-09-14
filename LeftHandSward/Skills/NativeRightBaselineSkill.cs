@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("左手测试-原生攻击基线");
-            Description = new TextObject("按副主动技能键 LeftAlt，通过 IPlayerInputEffector + MovementFlags 注入原生 AttackRight；不指定动作名、不修改动画 flags。");
+            Text = new TextObject("实验1-右手原生攻击基线");
+            Description = new TextObject("基线实验：按 LeftAlt 注入原生 AttackRight，确认 MovementFlags -> 右手原生动作 -> 右手 OnMeleeHit 链路正常。");
         }
 
         public override bool Activate(Agent casterAgent)

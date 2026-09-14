@@ -21,14 +21,14 @@ The extension:
 
 All current experiments are `SPSkillType.SubActive`, so they use New_ZZZF's existing sub-active input path (LeftAlt by default) and do not overlap the original left-mouse melee attack.
 
-- `LHTest_NativeRightBaseline`
-- `LHTest_VisualClone`
-- `LHTest_LeftHandFlags`
-- `LHTest_SwitchHandsFlags`
-- `LHTest_LeftStanceFlags`
-- `LHTest_VisualCloneAndAttack`
+- `LHTest_NativeRightBaseline` — right-hand native attack baseline
+- `LHTest_MetaMeshVisualClone` — old MetaMesh visual-copy baseline
+- `LHTest_AttachWeaponToLeftBone` — native AttachWeaponToBone with Identity frame
+- `LHTest_LeftGripTransform` — transplant the live right-hand grip transform to the off-hand item bone
+- `LHTest_OffHandStateProbe` — establish a real native OffHand from a second existing melee weapon slot, without attacking
+- `LHTest_OffHandNativeAttack` — with a valid OffHand already present, inject native attack input and observe which hand/weapon owns the sweep
 
-The IDs intentionally remain the same as the earlier in-core experiments so existing skill configuration data can resolve them when this extension module is installed.
+The experiment names and SkillIDs now describe the exact purpose of each test. The four older direction-only names were removed because AttackLeft/Right/Up/Down describe attack direction, not handedness.
 
 ## Extension flow
 
@@ -165,3 +165,19 @@ GetPrimaryWieldedItemIndex
 This visual path does not require the weapon to be melee, so crafted weapons,
 javelins and other currently wielded weapon entities can also be copied for visual tests.
 
+
+
+## 2026-09-14 experiment reset
+
+Real-game testing confirmed that the previous four visual+MovementFlags experiments still produced right-hand actions and right-hand melee hit detection. The cloned MetaMesh could render, but its bone-local transform was incorrect and the weapon floated away from the hand.
+
+The new experiment order is deliberately staged:
+
+1. confirm the normal right-hand native attack baseline;
+2. keep the old MetaMesh clone only as a visual baseline;
+3. test Bannerlord's native `Agent.AttachWeaponToBone` on `Monster.OffHandItemBoneIndex` with an identity frame;
+4. reconstruct the live main-hand grip transform from the real WeaponEntity and reuse it on the off-hand item bone;
+5. establish a real native OffHand using a second already-valid melee weapon slot, without attacking;
+6. only after experiment 5 succeeds, inject native attack input and observe whether the native sweep follows MainHand or OffHand.
+
+Experiment 5 intentionally requires a second melee weapon already present in another equipment slot. It does not construct a temporary ItemObject and does not call EquipWeaponWithNewEntity.

@@ -73,11 +73,11 @@ namespace LeftHandSward
 
             // Set this only after SkillFactory has initialized successfully.
             SkillFactory.RegisterSkill(NativeRightBaselineSkill.Id, new NativeRightBaselineSkill());
-            SkillFactory.RegisterSkill(LeftHandVisualCloneSkill.Id, new LeftHandVisualCloneSkill());
-            SkillFactory.RegisterSkill(LeftHandFlagAttackSkill.Id, new LeftHandFlagAttackSkill());
-            SkillFactory.RegisterSkill(SwitchHandsAttackSkill.Id, new SwitchHandsAttackSkill());
-            SkillFactory.RegisterSkill(LeftStanceAttackSkill.Id, new LeftStanceAttackSkill());
-            SkillFactory.RegisterSkill(VisualCloneAndAttackSkill.Id, new VisualCloneAndAttackSkill());
+            SkillFactory.RegisterSkill(MetaMeshVisualCloneSkill.Id, new MetaMeshVisualCloneSkill());
+            SkillFactory.RegisterSkill(AttachWeaponToLeftBoneSkill.Id, new AttachWeaponToLeftBoneSkill());
+            SkillFactory.RegisterSkill(LeftGripTransformSkill.Id, new LeftGripTransformSkill());
+            SkillFactory.RegisterSkill(OffHandStateProbeSkill.Id, new OffHandStateProbeSkill());
+            SkillFactory.RegisterSkill(OffHandNativeAttackSkill.Id, new OffHandNativeAttackSkill());
 
             _skillsRegistered = true;
             LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills SUCCESS count=6");

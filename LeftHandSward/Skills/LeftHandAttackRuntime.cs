@@ -18,7 +18,20 @@ namespace LeftHandSward.Skills
             public float ExpireAt;
         }
 
+        private sealed class NativeBoneAttachmentState
+        {
+            public Agent Agent;
+            public int AttachedWeaponIndex;
+            public sbyte BoneIndex;
+            public float ExpireAt;
+        }
+
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
+        private static readonly List<NativeBoneAttachmentState> _nativeBoneAttachments = new List<NativeBoneAttachmentState>();
+
+        private static Agent _offHandProbeAgent;
+        private static EquipmentIndex _offHandProbePreviousIndex = EquipmentIndex.None;
+        private static EquipmentIndex _offHandProbeCurrentIndex = EquipmentIndex.None;
 
         // A SkillBase.Activate call can happen outside the exact input collection point.
         // Queue the request and inject it from IPlayerInputEffector on the next collection.
@@ -288,6 +301,297 @@ namespace LeftHandSward.Skills
             return true;
         }
 
+        public static bool AttachCurrentWeaponToLeftItemBone(
+            Agent agent,
+            bool copyMainHandGrip,
+            float lifetimeSeconds,
+            out string result)
+        {
+            string mode = copyMainHandGrip ? "RightGripTransform" : "Identity";
+            LeftHandSwardLog.Info(
+                "NativeBoneAttach",
+                "BEGIN mode=" + mode + " agent=" + SafeAgentName(agent));
+
+            if (!TryGetActiveWeaponForVisual(
+                    agent,
+                    out MissionWeapon weapon,
+                    out EquipmentIndex weaponSlot,
+                    out string error))
+            {
+                result = error;
+                return false;
+            }
+
+            if (agent.AgentVisuals == null || agent.Monster == null)
+            {
+                result = "AgentVisuals/Monster 不可用";
+                LeftHandSwardLog.Warn("NativeBoneAttach", result);
+                return false;
+            }
+
+            Skeleton skeleton = agent.AgentVisuals.GetSkeleton();
+            if (skeleton == null || !skeleton.IsValid)
+            {
+                result = "Skeleton 无效";
+                LeftHandSwardLog.Warn("NativeBoneAttach", result);
+                return false;
+            }
+
+            sbyte leftItemBone = agent.Monster.OffHandItemBoneIndex;
+            sbyte rightItemBone = agent.Monster.MainHandItemBoneIndex;
+            if (leftItemBone < 0)
+            {
+                result = "Monster.OffHandItemBoneIndex 无效";
+                LeftHandSwardLog.Warn("NativeBoneAttach", result);
+                return false;
+            }
+
+            MatrixFrame attachLocalFrame = MatrixFrame.Identity;
+
+            if (copyMainHandGrip)
+            {
+                WeakGameEntity weaponEntity = agent.GetWeaponEntityFromEquipmentSlot(weaponSlot);
+                if (!weaponEntity.IsValid)
+                {
+                    result = "当前主手 WeaponEntity 无效";
+                    LeftHandSwardLog.Warn("NativeBoneAttach", result);
+                    return false;
+                }
+
+                if (rightItemBone < 0)
+                {
+                    result = "Monster.MainHandItemBoneIndex 无效";
+                    LeftHandSwardLog.Warn("NativeBoneAttach", result);
+                    return false;
+                }
+
+                skeleton.ForceUpdateBoneFrames();
+
+                MatrixFrame visualsGlobal = agent.AgentVisuals.GetGlobalFrame();
+                MatrixFrame rightBoneWorld =
+                    visualsGlobal * skeleton.GetBoneEntitialFrameWithIndex(rightItemBone);
+                MatrixFrame weaponWorld = weaponEntity.GetGlobalFrame();
+
+                attachLocalFrame =
+                    rightBoneWorld.TransformToLocalNonOrthogonal(weaponWorld);
+
+                LeftHandSwardLog.Info(
+                    "NativeBoneAttach",
+                    "GripFrames"
+                    + " rightBone=" + rightItemBone
+                    + " leftBone=" + leftItemBone
+                    + " rightBoneWorld={" + DescribeFrame(rightBoneWorld) + "}"
+                    + " weaponWorld={" + DescribeFrame(weaponWorld) + "}"
+                    + " attachLocal={" + DescribeFrame(attachLocalFrame) + "}");
+            }
+
+            RemoveNativeBoneAttachment(agent);
+
+            int beforeCount = agent.GetAttachedWeaponsCount();
+            LeftHandSwardLog.Info(
+                "NativeBoneAttach",
+                "CALL Agent.AttachWeaponToBone BEGIN"
+                + " mode=" + mode
+                + " beforeCount=" + beforeCount
+                + " bone=" + leftItemBone
+                + " item=" + (weapon.Item == null ? "null" : weapon.Item.StringId)
+                + " local={" + DescribeFrame(attachLocalFrame) + "}");
+
+            agent.AttachWeaponToBone(
+                weapon,
+                null,
+                leftItemBone,
+                ref attachLocalFrame);
+
+            int afterCount = agent.GetAttachedWeaponsCount();
+            LeftHandSwardLog.Info(
+                "NativeBoneAttach",
+                "CALL Agent.AttachWeaponToBone RETURN"
+                + " mode=" + mode
+                + " afterCount=" + afterCount
+                + " hands={" + DescribeHands(agent) + "}");
+
+            if (afterCount <= beforeCount)
+            {
+                result = "AttachWeaponToBone 返回后 attached weapon 数量未增加";
+                LeftHandSwardLog.Warn("NativeBoneAttach", result);
+                return false;
+            }
+
+            _nativeBoneAttachments.Add(new NativeBoneAttachmentState
+            {
+                Agent = agent,
+                AttachedWeaponIndex = beforeCount,
+                BoneIndex = leftItemBone,
+                ExpireAt = (agent.Mission != null ? agent.Mission.CurrentTime : 0f)
+                           + Math.Max(0.25f, lifetimeSeconds)
+            });
+
+            result = copyMainHandGrip
+                ? "已用右手真实握持变换挂到 OffHandItemBone"
+                : "已用 Identity frame 挂到 OffHandItemBone";
+            LeftHandSwardLog.Info("NativeBoneAttach", "SUCCESS mode=" + mode + " " + result);
+            return true;
+        }
+
+        public static bool EstablishOffHandStateFromExistingWeapon(
+            Agent agent,
+            out string result)
+        {
+            LeftHandSwardLog.Info(
+                "OffHandProbe",
+                "BEGIN agent=" + SafeAgentName(agent)
+                + " hands={" + DescribeHands(agent) + "}");
+
+            if (agent == null || agent.State != AgentState.Active)
+            {
+                result = "Agent 不可用";
+                LeftHandSwardLog.Warn("OffHandProbe", result);
+                return false;
+            }
+
+            if (agent.Mission == null || agent.Mission.MainAgent != agent)
+            {
+                result = "OffHand 状态实验只支持 MainAgent";
+                LeftHandSwardLog.Warn("OffHandProbe", result);
+                return false;
+            }
+
+            EquipmentIndex primaryIndex = agent.GetPrimaryWieldedItemIndex();
+            if (primaryIndex == EquipmentIndex.None)
+            {
+                result = "当前没有主手武器";
+                LeftHandSwardLog.Warn("OffHandProbe", result);
+                return false;
+            }
+
+            EquipmentIndex currentOffHand = agent.GetOffhandWieldedItemIndex();
+            if (currentOffHand != EquipmentIndex.None)
+            {
+                WeaponInfo existingInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
+                if (_offHandProbeAgent == agent && existingInfo.IsValid)
+                {
+                    result = "OffHand probe 已建立: slot=" + currentOffHand;
+                    LeftHandSwardLog.Info(
+                        "OffHandProbe",
+                        result + " hands={" + DescribeHands(agent) + "}");
+                    return true;
+                }
+
+                result = "当前已经有原生 OffHand，本实验不会覆盖: slot=" + currentOffHand;
+                LeftHandSwardLog.Warn("OffHandProbe", result);
+                return false;
+            }
+
+            EquipmentIndex candidate = FindSecondaryMeleeWeaponSlot(agent, primaryIndex);
+            if (candidate == EquipmentIndex.None)
+            {
+                result = "需要在另一个武器槽装备第二把近战武器；本实验不会创建临时 ItemObject";
+                LeftHandSwardLog.Warn("OffHandProbe", result);
+                return false;
+            }
+
+            RestoreOffHandProbe();
+
+            int mainUsageIndex = GetMainHandUsageIndex(agent);
+            _offHandProbeAgent = agent;
+            _offHandProbePreviousIndex = currentOffHand;
+            _offHandProbeCurrentIndex = candidate;
+
+            LeftHandSwardLog.Info(
+                "OffHandProbe",
+                "CALL SetWieldedItemIndexAsClient BEGIN"
+                + " hand=OffHand"
+                + " candidate=" + candidate
+                + " mainUsageIndex=" + mainUsageIndex
+                + " candidateWeapon=" + DescribeMissionWeapon(agent.Equipment[candidate]));
+
+            agent.SetWieldedItemIndexAsClient(
+                Agent.HandIndex.OffHand,
+                candidate,
+                true,
+                false,
+                mainUsageIndex);
+
+            LeftHandSwardLog.Info(
+                "OffHandProbe",
+                "CALL SetWieldedItemIndexAsClient RETURN"
+                + " hands={" + DescribeHands(agent) + "}");
+
+            EquipmentIndex actualOffHand = agent.GetOffhandWieldedItemIndex();
+            WeaponInfo offInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
+            if (actualOffHand != candidate || !offInfo.IsValid)
+            {
+                result = "native 调用返回，但 OffHand 未建立"
+                         + " requested=" + candidate
+                         + " actual=" + actualOffHand
+                         + " valid=" + offInfo.IsValid;
+                LeftHandSwardLog.Warn("OffHandProbe", result);
+                _offHandProbeAgent = null;
+                _offHandProbePreviousIndex = EquipmentIndex.None;
+                _offHandProbeCurrentIndex = EquipmentIndex.None;
+                return false;
+            }
+
+            result = "OffHand 已建立: slot=" + actualOffHand
+                     + " weapon=" + DescribeMissionWeapon(agent.WieldedOffhandWeapon);
+            LeftHandSwardLog.Info(
+                "OffHandProbe",
+                "SUCCESS " + result + " hands={" + DescribeHands(agent) + "}");
+            return true;
+        }
+
+        public static bool QueueOffHandNativeAttack(
+            Agent agent,
+            string skillId,
+            Agent.MovementControlFlag attackFlag,
+            out string result)
+        {
+            if (agent == null || agent.State != AgentState.Active)
+            {
+                result = "Agent 不可用";
+                return false;
+            }
+
+            EquipmentIndex offHandIndex = agent.GetOffhandWieldedItemIndex();
+            WeaponInfo offInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
+            MissionWeapon offWeapon = agent.WieldedOffhandWeapon;
+
+            if (offHandIndex == EquipmentIndex.None ||
+                !offInfo.IsValid ||
+                offWeapon.IsEmpty ||
+                offWeapon.CurrentUsageItem == null)
+            {
+                result = "OffHand 尚未建立；先单独验证 LHTest_OffHandStateProbe";
+                LeftHandSwardLog.Warn(
+                    "OffHandAttack",
+                    result + " hands={" + DescribeHands(agent) + "}");
+                return false;
+            }
+
+            if (!offWeapon.CurrentUsageItem.IsMeleeWeapon)
+            {
+                result = "当前 OffHand 不是近战武器";
+                LeftHandSwardLog.Warn("OffHandAttack", result);
+                return false;
+            }
+
+            LeftHandSwardLog.Info(
+                "OffHandAttack",
+                "PRECHECK SUCCESS"
+                + " skill=" + skillId
+                + " offHandSlot=" + offHandIndex
+                + " offWeapon=" + DescribeMissionWeapon(offWeapon)
+                + " requestedFlag=" + attackFlag
+                + " hands={" + DescribeHands(agent) + "}");
+
+            bool queued = QueueNativeAttack(agent, skillId, attackFlag, out string queueResult);
+            result = queued
+                ? "OffHand 已有效；" + queueResult + "，观察 native 最终使用哪只手/哪把武器"
+                : queueResult;
+            return queued;
+        }
+
         public static void Tick(Mission mission)
         {
             if (mission == null)
@@ -301,6 +605,17 @@ namespace LeftHandSward.Skills
                     mission.CurrentTime >= state.ExpireAt)
                 {
                     RemoveVisualCloneAt(i);
+                }
+            }
+
+            for (int i = _nativeBoneAttachments.Count - 1; i >= 0; i--)
+            {
+                NativeBoneAttachmentState state = _nativeBoneAttachments[i];
+                if (state.Agent == null ||
+                    state.Agent.State != AgentState.Active ||
+                    mission.CurrentTime >= state.ExpireAt)
+                {
+                    RemoveNativeBoneAttachmentAt(i);
                 }
             }
 
@@ -340,12 +655,18 @@ namespace LeftHandSward.Skills
             LeftHandSwardLog.Info(
                 "Runtime",
                 "Cleanup visualClones=" + _visualClones.Count
+                + " nativeBoneAttachments=" + _nativeBoneAttachments.Count
+                + " offHandProbe=" + (_offHandProbeAgent == null ? "null" : SafeAgentName(_offHandProbeAgent))
                 + " queuedSkill=" + (_queuedNativeAttackSkillId ?? "null")
                 + " pendingSkill=" + (_pendingAttackSkillId ?? "null"));
 
             for (int i = _visualClones.Count - 1; i >= 0; i--)
                 RemoveVisualCloneAt(i);
 
+            for (int i = _nativeBoneAttachments.Count - 1; i >= 0; i--)
+                RemoveNativeBoneAttachmentAt(i);
+
+            RestoreOffHandProbe();
 
             _queuedNativeAttackAgent = null;
             _queuedNativeAttackSkillId = null;
@@ -363,6 +684,18 @@ namespace LeftHandSward.Skills
             {
                 if (_visualClones[i].Agent == agent)
                     RemoveVisualCloneAt(i);
+            }
+        }
+
+        public static void RemoveNativeBoneAttachment(Agent agent)
+        {
+            if (agent == null)
+                return;
+
+            for (int i = _nativeBoneAttachments.Count - 1; i >= 0; i--)
+            {
+                if (_nativeBoneAttachments[i].Agent == agent)
+                    RemoveNativeBoneAttachmentAt(i);
             }
         }
 
@@ -437,6 +770,143 @@ namespace LeftHandSward.Skills
                 + " agent=" + SafeAgentName(agent)
                 + " state={" + DescribeAgentAction(agent) + "}"
                 + " hands={" + DescribeHands(agent) + "}");
+        }
+
+        private static EquipmentIndex FindSecondaryMeleeWeaponSlot(
+            Agent agent,
+            EquipmentIndex primaryIndex)
+        {
+            if (agent == null || agent.Equipment == null)
+                return EquipmentIndex.None;
+
+            for (EquipmentIndex slot = EquipmentIndex.WeaponItemBeginSlot;
+                 slot < EquipmentIndex.ExtraWeaponSlot;
+                 slot++)
+            {
+                if (slot == primaryIndex)
+                    continue;
+
+                MissionWeapon weapon = agent.Equipment[slot];
+                if (weapon.IsEmpty || weapon.Item == null || weapon.CurrentUsageItem == null)
+                    continue;
+
+                if (weapon.CurrentUsageItem.IsMeleeWeapon)
+                    return slot;
+            }
+
+            return EquipmentIndex.None;
+        }
+
+        private static int GetMainHandUsageIndex(Agent agent)
+        {
+            if (agent == null)
+                return 0;
+
+            EquipmentIndex primary = agent.GetPrimaryWieldedItemIndex();
+            if (primary == EquipmentIndex.None)
+                return 0;
+
+            MissionWeapon weapon = agent.Equipment[primary];
+            return weapon.IsEmpty ? 0 : weapon.CurrentUsageIndex;
+        }
+
+        private static void RestoreOffHandProbe()
+        {
+            Agent agent = _offHandProbeAgent;
+            EquipmentIndex previous = _offHandProbePreviousIndex;
+            EquipmentIndex current = _offHandProbeCurrentIndex;
+
+            _offHandProbeAgent = null;
+            _offHandProbePreviousIndex = EquipmentIndex.None;
+            _offHandProbeCurrentIndex = EquipmentIndex.None;
+
+            if (agent == null || agent.State != AgentState.Active)
+                return;
+
+            int mainUsageIndex = GetMainHandUsageIndex(agent);
+            LeftHandSwardLog.Info(
+                "OffHandProbe",
+                "CALL restore SetWieldedItemIndexAsClient BEGIN"
+                + " current=" + current
+                + " previous=" + previous
+                + " mainUsageIndex=" + mainUsageIndex);
+
+            agent.SetWieldedItemIndexAsClient(
+                Agent.HandIndex.OffHand,
+                previous,
+                true,
+                false,
+                mainUsageIndex);
+
+            LeftHandSwardLog.Info(
+                "OffHandProbe",
+                "CALL restore SetWieldedItemIndexAsClient RETURN"
+                + " hands={" + DescribeHands(agent) + "}");
+        }
+
+        private static void RemoveNativeBoneAttachmentAt(int index)
+        {
+            NativeBoneAttachmentState state = _nativeBoneAttachments[index];
+            try
+            {
+                Agent agent = state.Agent;
+                if (agent != null && agent.State == AgentState.Active)
+                {
+                    int count = agent.GetAttachedWeaponsCount();
+                    if (state.AttachedWeaponIndex >= 0 &&
+                        state.AttachedWeaponIndex < count &&
+                        agent.GetAttachedWeaponBoneIndex(state.AttachedWeaponIndex) == state.BoneIndex)
+                    {
+                        LeftHandSwardLog.Info(
+                            "NativeBoneAttach",
+                            "CALL Agent.DeleteAttachedWeapon BEGIN"
+                            + " index=" + state.AttachedWeaponIndex
+                            + " bone=" + state.BoneIndex);
+
+                        agent.DeleteAttachedWeapon(state.AttachedWeaponIndex);
+
+                        LeftHandSwardLog.Info(
+                            "NativeBoneAttach",
+                            "CALL Agent.DeleteAttachedWeapon RETURN"
+                            + " remaining=" + agent.GetAttachedWeaponsCount());
+                    }
+                    else
+                    {
+                        LeftHandSwardLog.Warn(
+                            "NativeBoneAttach",
+                            "Skip delete because attached weapon index/bone changed"
+                            + " index=" + state.AttachedWeaponIndex
+                            + " count=" + count
+                            + " expectedBone=" + state.BoneIndex);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LeftHandSwardLog.Exception("NativeBoneAttach", ex);
+            }
+
+            _nativeBoneAttachments.RemoveAt(index);
+        }
+
+        private static string DescribeFrame(MatrixFrame frame)
+        {
+            return "origin=("
+                   + frame.origin.x + ","
+                   + frame.origin.y + ","
+                   + frame.origin.z + ")"
+                   + " s=("
+                   + frame.rotation.s.x + ","
+                   + frame.rotation.s.y + ","
+                   + frame.rotation.s.z + ")"
+                   + " f=("
+                   + frame.rotation.f.x + ","
+                   + frame.rotation.f.y + ","
+                   + frame.rotation.f.z + ")"
+                   + " u=("
+                   + frame.rotation.u.x + ","
+                   + frame.rotation.u.y + ","
+                   + frame.rotation.u.z + ")";
         }
 
         private static void ClearMeleeObservation()
