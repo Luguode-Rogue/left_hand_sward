@@ -44,6 +44,13 @@ namespace LeftHandSward.Skills
         private static float _pendingAttackUntil;
         private static string _lastObservedAttackState;
 
+        private static Agent _leftHandRewriteAgent;
+        private static string _leftHandRewriteSkillId;
+        private static EquipmentIndex _leftHandRewritePrimarySlot = EquipmentIndex.None;
+        private static EquipmentIndex _leftHandRewriteOffHandSlot = EquipmentIndex.None;
+        private static float _leftHandRewriteUntil;
+        private static bool _leftHandRewriteApplied;
+
 
         public static bool TryGetActiveWeapon(Agent agent, out MissionWeapon weapon, out string error)
         {
@@ -483,7 +490,7 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            EquipmentIndex candidate = FindSecondaryMeleeWeaponSlot(agent, primaryIndex);
+            EquipmentIndex candidate = FindDistinctCurrentOneHandMeleeSlot(agent, primaryIndex);
             if (candidate == EquipmentIndex.None)
             {
                 result = "需要在另一个武器槽装备第二把近战武器；本实验不会创建临时 ItemObject";
@@ -541,7 +548,7 @@ namespace LeftHandSward.Skills
             return true;
         }
 
-        public static bool QueueOffHandNativeAttack(
+        public static bool QueueNativeLeftHandAttack(
             Agent agent,
             string skillId,
             Agent.MovementControlFlag attackFlag,
@@ -553,66 +560,167 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            EquipmentIndex offHandIndex = agent.GetOffhandWieldedItemIndex();
-            WeaponInfo offInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
-            MissionWeapon offWeapon = agent.WieldedOffhandWeapon;
-
-            if (offHandIndex == EquipmentIndex.None ||
-                !offInfo.IsValid ||
-                offWeapon.IsEmpty ||
-                offWeapon.CurrentUsageItem == null)
+            if (agent.Mission == null || agent.Mission.MainAgent != agent)
             {
-                LeftHandSwardLog.Info(
-                    "OffHandAttack",
-                    "No valid OffHand before attack; auto-establishing one in the same skill activation");
+                result = "左手原生攻击实验只支持 MainAgent";
+                LeftHandSwardLog.Warn("LeftHandNative", result);
+                return false;
+            }
 
-                if (!EstablishOffHandStateFromExistingWeapon(agent, out string establishResult))
+            EquipmentIndex primaryBefore = agent.GetPrimaryWieldedItemIndex();
+            if (primaryBefore == EquipmentIndex.None)
+            {
+                result = "当前没有主手武器";
+                LeftHandSwardLog.Warn("LeftHandNative", result);
+                return false;
+            }
+
+            MissionWeapon mainWeapon = agent.Equipment[primaryBefore];
+            if (mainWeapon.IsEmpty ||
+                mainWeapon.CurrentUsageItem == null ||
+                !mainWeapon.CurrentUsageItem.IsMeleeWeapon)
+            {
+                result = "当前主手不是有效近战武器";
+                LeftHandSwardLog.Warn("LeftHandNative", result);
+                return false;
+            }
+
+            // Never leave an older probe active across a new test.
+            RestoreOffHandProbe();
+
+            EquipmentIndex existingOffHand = agent.GetOffhandWieldedItemIndex();
+            EquipmentIndex offHandSlot = EquipmentIndex.None;
+            bool createdOffHand = false;
+
+            if (existingOffHand != EquipmentIndex.None &&
+                existingOffHand != primaryBefore &&
+                IsCurrentUsageOneHandMelee(agent.Equipment[existingOffHand]))
+            {
+                offHandSlot = existingOffHand;
+                LeftHandSwardLog.Info(
+                    "LeftHandNative",
+                    "Using existing safe OffHand slot=" + offHandSlot
+                    + " weapon=" + DescribeMissionWeapon(agent.Equipment[offHandSlot]));
+            }
+            else
+            {
+                offHandSlot = FindDistinctCurrentOneHandMeleeSlot(agent, primaryBefore);
+                if (offHandSlot == EquipmentIndex.None)
                 {
-                    result = "自动建立 OffHand 失败: " + establishResult;
+                    result = "需要在另一个装备槽放一把当前 usage 就是单手近战的武器（建议普通单手剑/斧/锤）";
                     LeftHandSwardLog.Warn(
-                        "OffHandAttack",
+                        "LeftHandNative",
                         result + " hands={" + DescribeHands(agent) + "}");
                     return false;
                 }
 
-                offHandIndex = agent.GetOffhandWieldedItemIndex();
-                offInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
-                offWeapon = agent.WieldedOffhandWeapon;
+                int mainUsageIndex = GetMainHandUsageIndex(agent);
+                _offHandProbeAgent = agent;
+                _offHandProbePreviousIndex = existingOffHand;
+                _offHandProbeCurrentIndex = offHandSlot;
 
                 LeftHandSwardLog.Info(
-                    "OffHandAttack",
-                    "AUTO-ESTABLISH RETURN"
-                    + " result={" + establishResult + "}"
+                    "LeftHandNative",
+                    "CALL SetWieldedItemIndexAsClient BEGIN"
+                    + " primary=" + primaryBefore
+                    + " offHandCandidate=" + offHandSlot
+                    + " mainUsageIndex=" + mainUsageIndex
+                    + " candidate=" + DescribeMissionWeapon(agent.Equipment[offHandSlot]));
+
+                agent.SetWieldedItemIndexAsClient(
+                    Agent.HandIndex.OffHand,
+                    offHandSlot,
+                    true,
+                    false,
+                    mainUsageIndex);
+
+                LeftHandSwardLog.Info(
+                    "LeftHandNative",
+                    "CALL SetWieldedItemIndexAsClient RETURN"
                     + " hands={" + DescribeHands(agent) + "}");
+
+                createdOffHand = true;
             }
 
-            if (!offWeapon.CurrentUsageItem.IsMeleeWeapon)
+            EquipmentIndex primaryAfter = agent.GetPrimaryWieldedItemIndex();
+            EquipmentIndex offHandAfter = agent.GetOffhandWieldedItemIndex();
+            WeaponInfo offInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
+            MissionWeapon offWeapon = agent.WieldedOffhandWeapon;
+
+            if (primaryAfter != primaryBefore ||
+                offHandAfter == EquipmentIndex.None ||
+                offHandAfter == primaryAfter ||
+                offHandAfter != offHandSlot ||
+                !offInfo.IsValid ||
+                !offInfo.IsMeleeWeapon ||
+                offWeapon.IsEmpty ||
+                offWeapon.CurrentUsageItem == null ||
+                !IsCurrentUsageOneHandMelee(offWeapon))
             {
-                result = "当前 OffHand 不是近战武器";
-                LeftHandSwardLog.Warn("OffHandAttack", result);
+                result = "OffHand 建立后状态不安全，已立即回滚"
+                         + " primaryBefore=" + primaryBefore
+                         + " primaryAfter=" + primaryAfter
+                         + " requestedOffHand=" + offHandSlot
+                         + " actualOffHand=" + offHandAfter
+                         + " offInfoValid=" + offInfo.IsValid
+                         + " offInfoMelee=" + offInfo.IsMeleeWeapon;
+
+                LeftHandSwardLog.Warn(
+                    "LeftHandNative",
+                    result + " hands={" + DescribeHands(agent) + "}");
+
+                if (createdOffHand)
+                    RestoreOffHandProbe();
                 return false;
             }
 
             LeftHandSwardLog.Info(
-                "OffHandAttack",
-                "PRECHECK SUCCESS"
-                + " skill=" + skillId
-                + " offHandSlot=" + offHandIndex
-                + " offWeapon=" + DescribeMissionWeapon(offWeapon)
-                + " requestedFlag=" + attackFlag
-                + " hands={" + DescribeHands(agent) + "}");
+                "LeftHandNative",
+                "SAFE OFFHAND READY"
+                + " primary=" + primaryAfter
+                + " offHand=" + offHandAfter
+                + " mainWeapon=" + DescribeMissionWeapon(agent.WieldedWeapon)
+                + " offWeapon=" + DescribeMissionWeapon(offWeapon));
 
-            bool queued = QueueNativeAttack(agent, skillId, attackFlag, out string queueResult);
-            result = queued
-                ? "OffHand 已有效；" + queueResult + "，观察 native 最终使用哪只手/哪把武器"
-                : queueResult;
-            return queued;
+            bool queued = QueueNativeAttack(
+                agent,
+                skillId,
+                attackFlag,
+                out string queueResult);
+
+            if (!queued)
+            {
+                if (createdOffHand)
+                    RestoreOffHandProbe();
+                result = queueResult;
+                return false;
+            }
+
+            _leftHandRewriteAgent = agent;
+            _leftHandRewriteSkillId = skillId;
+            _leftHandRewritePrimarySlot = primaryAfter;
+            _leftHandRewriteOffHandSlot = offHandAfter;
+            _leftHandRewriteUntil = agent.Mission.CurrentTime + 2.0f;
+            _leftHandRewriteApplied = false;
+
+            LeftHandSwardLog.Info(
+                "LeftHandNative",
+                "ARMED release rewrite"
+                + " skill=" + skillId
+                + " primary=" + _leftHandRewritePrimarySlot
+                + " offHand=" + _leftHandRewriteOffHandSlot
+                + " flag=anf_use_left_hand_during_attack");
+
+            result = "已建立安全 OffHand 并排队原生攻击；等待 ReleaseMelee 后追加左手攻击 flag";
+            return true;
         }
 
         public static void Tick(Mission mission)
         {
             if (mission == null)
                 return;
+
+            TickNativeLeftHandRewrite(mission);
 
             for (int i = _visualClones.Count - 1; i >= 0; i--)
             {
@@ -682,8 +790,6 @@ namespace LeftHandSward.Skills
 
             for (int i = _nativeBoneAttachments.Count - 1; i >= 0; i--)
                 RemoveNativeBoneAttachmentAt(i);
-
-            RestoreOffHandProbe();
 
             _queuedNativeAttackAgent = null;
             _queuedNativeAttackSkillId = null;
@@ -789,16 +895,13 @@ namespace LeftHandSward.Skills
                 + " hands={" + DescribeHands(agent) + "}");
         }
 
-        private static EquipmentIndex FindSecondaryMeleeWeaponSlot(
+        private static EquipmentIndex FindDistinctCurrentOneHandMeleeSlot(
             Agent agent,
             EquipmentIndex primaryIndex)
         {
             if (agent == null || agent.Equipment == null)
                 return EquipmentIndex.None;
 
-            // First prefer an item that actually has a melee usage which is allowed
-            // in one hand. The previous real-game probe proved that native can put
-            // a TwoHandedMace in OffHand, but that is a poor left-hand attack test.
             for (EquipmentIndex slot = EquipmentIndex.WeaponItemBeginSlot;
                  slot < EquipmentIndex.ExtraWeaponSlot;
                  slot++)
@@ -807,60 +910,148 @@ namespace LeftHandSward.Skills
                     continue;
 
                 MissionWeapon weapon = agent.Equipment[slot];
-                if (HasOneHandCapableMeleeUsage(weapon))
-                {
-                    LeftHandSwardLog.Info(
-                        "OffHandProbe",
-                        "Selected preferred one-hand-capable candidate"
-                        + " slot=" + slot
-                        + " weapon=" + DescribeMissionWeapon(weapon));
-                    return slot;
-                }
-            }
-
-            // Fallback: keep the already-proven broad melee behavior so we can still
-            // probe native OffHand state when the loadout has no one-hand-capable spare.
-            for (EquipmentIndex slot = EquipmentIndex.WeaponItemBeginSlot;
-                 slot < EquipmentIndex.ExtraWeaponSlot;
-                 slot++)
-            {
-                if (slot == primaryIndex)
+                if (!IsCurrentUsageOneHandMelee(weapon))
                     continue;
 
-                MissionWeapon weapon = agent.Equipment[slot];
-                if (weapon.IsEmpty || weapon.Item == null || weapon.CurrentUsageItem == null)
-                    continue;
-
-                if (weapon.CurrentUsageItem.IsMeleeWeapon)
-                {
-                    LeftHandSwardLog.Warn(
-                        "OffHandProbe",
-                        "Falling back to generic melee candidate"
-                        + " slot=" + slot
-                        + " weapon=" + DescribeMissionWeapon(weapon));
-                    return slot;
-                }
+                LeftHandSwardLog.Info(
+                    "LeftHandNative",
+                    "Selected strict OffHand candidate"
+                    + " slot=" + slot
+                    + " weapon=" + DescribeMissionWeapon(weapon));
+                return slot;
             }
 
             return EquipmentIndex.None;
         }
 
-        private static bool HasOneHandCapableMeleeUsage(MissionWeapon weapon)
+        private static bool IsCurrentUsageOneHandMelee(MissionWeapon weapon)
         {
-            if (weapon.IsEmpty || weapon.Item == null)
-                return false;
-
-            for (int i = 0; i < weapon.WeaponsCount; i++)
+            if (weapon.IsEmpty ||
+                weapon.Item == null ||
+                weapon.CurrentUsageItem == null ||
+                !weapon.CurrentUsageItem.IsMeleeWeapon)
             {
-                WeaponComponentData usage = weapon.GetWeaponComponentDataForUsage(i);
-                if (usage == null || !usage.IsMeleeWeapon)
-                    continue;
-
-                if (!usage.WeaponFlags.HasAnyFlag(WeaponFlags.NotUsableWithOneHand))
-                    return true;
+                return false;
             }
 
-            return false;
+            return !weapon.CurrentUsageItem.WeaponFlags.HasAnyFlag(
+                WeaponFlags.NotUsableWithOneHand);
+        }
+
+        private static void TickNativeLeftHandRewrite(Mission mission)
+        {
+            Agent agent = _leftHandRewriteAgent;
+            if (agent == null || string.IsNullOrEmpty(_leftHandRewriteSkillId))
+                return;
+
+            if (agent.State != AgentState.Active || mission.MainAgent != agent)
+            {
+                AbortNativeLeftHandRewrite("Agent/MainAgent 已失效", true);
+                return;
+            }
+
+            EquipmentIndex primary = agent.GetPrimaryWieldedItemIndex();
+            EquipmentIndex offHand = agent.GetOffhandWieldedItemIndex();
+
+            if (primary != _leftHandRewritePrimarySlot ||
+                offHand != _leftHandRewriteOffHandSlot ||
+                primary == EquipmentIndex.None ||
+                offHand == EquipmentIndex.None ||
+                primary == offHand)
+            {
+                AbortNativeLeftHandRewrite(
+                    "持武器槽在攻击过程中发生变化"
+                    + " expectedPrimary=" + _leftHandRewritePrimarySlot
+                    + " actualPrimary=" + primary
+                    + " expectedOffHand=" + _leftHandRewriteOffHandSlot
+                    + " actualOffHand=" + offHand,
+                    true);
+                return;
+            }
+
+            if (!_leftHandRewriteApplied &&
+                agent.GetCurrentActionType(1) == Agent.ActionCodeType.ReleaseMelee)
+            {
+                ActionIndexCache currentAction = agent.GetCurrentAction(1);
+                float progress = agent.GetCurrentActionProgress(1);
+                AnimFlags beforeFlags = agent.GetCurrentAnimationFlag(1);
+
+                LeftHandSwardLog.Info(
+                    "LeftHandNative",
+                    "CALL SetActionChannel BEGIN"
+                    + " actionIndex=" + currentAction.Index
+                    + " progress=" + progress
+                    + " beforeFlags=" + beforeFlags
+                    + " addFlag=anf_use_left_hand_during_attack"
+                    + " hands={" + DescribeHands(agent) + "}");
+
+                bool accepted = agent.SetActionChannel(
+                    1,
+                    currentAction,
+                    true,
+                    AnimFlags.anf_use_left_hand_during_attack,
+                    0f,
+                    1f,
+                    0f,
+                    0.4f,
+                    progress,
+                    false,
+                    -0.2f,
+                    0,
+                    false);
+
+                _leftHandRewriteApplied = true;
+
+                LeftHandSwardLog.Info(
+                    "LeftHandNative",
+                    "CALL SetActionChannel RETURN"
+                    + " accepted=" + accepted
+                    + " afterType=" + agent.GetCurrentActionType(1)
+                    + " afterStage=" + agent.GetCurrentActionStage(1)
+                    + " afterFlags=" + agent.GetCurrentAnimationFlag(1)
+                    + " hands={" + DescribeHands(agent) + "}");
+
+                if (!accepted)
+                {
+                    AbortNativeLeftHandRewrite(
+                        "native ReleaseMelee 左手 flag 被拒绝",
+                        true);
+                    return;
+                }
+            }
+
+            if (mission.CurrentTime > _leftHandRewriteUntil)
+            {
+                AbortNativeLeftHandRewrite(
+                    _leftHandRewriteApplied
+                        ? "左手 ReleaseMelee rewrite 已执行但观察窗口结束"
+                        : "native 未进入 ReleaseMelee，未执行左手 rewrite",
+                    true);
+            }
+        }
+
+        private static void AbortNativeLeftHandRewrite(
+            string reason,
+            bool restoreOffHand)
+        {
+            if (_leftHandRewriteAgent != null)
+            {
+                LeftHandSwardLog.Warn(
+                    "LeftHandNative",
+                    "END " + reason
+                    + " applied=" + _leftHandRewriteApplied
+                    + " hands={" + DescribeHands(_leftHandRewriteAgent) + "}");
+            }
+
+            _leftHandRewriteAgent = null;
+            _leftHandRewriteSkillId = null;
+            _leftHandRewritePrimarySlot = EquipmentIndex.None;
+            _leftHandRewriteOffHandSlot = EquipmentIndex.None;
+            _leftHandRewriteUntil = 0f;
+            _leftHandRewriteApplied = false;
+
+            if (restoreOffHand)
+                RestoreOffHandProbe();
         }
 
         private static int GetMainHandUsageIndex(Agent agent)
@@ -977,6 +1168,8 @@ namespace LeftHandSward.Skills
 
         private static void ClearMeleeObservation()
         {
+            AbortNativeLeftHandRewrite("melee observation finished", true);
+
             _pendingAttackAgent = null;
             _pendingAttackSkillId = null;
             _pendingAttackUntil = 0f;

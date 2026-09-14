@@ -24,8 +24,7 @@ All current experiments are `SPSkillType.SubActive`, so they use New_ZZZF's exis
 - `LHTest_NativeRightBaseline` — right-hand native attack baseline
 - `LHTest_MetaMeshVisualClone` — old MetaMesh visual-copy baseline
 - `LHTest_AttachWeaponToLeftBone` — validated native left-hand visual attachment with Identity frame
-- `LHTest_OffHandStateProbe` — validated native OffHand state probe, without attacking
-- `LHTest_OffHandNativeAttack` — auto-establish OffHand and inject native attack input in the same activation
+- `LHTest_NativeLeftHandAttack` — strict safe-OffHand + native ReleaseMelee left-hand-flag experiment
 
 The experiment names and SkillIDs now describe the exact purpose of each test. The four older direction-only names were removed because AttackLeft/Right/Up/Down describe attack direction, not handedness.
 
@@ -43,7 +42,7 @@ Campaign starts loading
 
 New_ZZZF.OnNewGameCreated / OnGameLoaded is about to run
     -> LeftHandSward Harmony Prefix
-    -> SkillFactory.RegisterSkill(...) for all 5 external skills
+    -> SkillFactory.RegisterSkill(...) for all 4 external skills
     -> New_ZZZF original callback continues
        -> CompositeSpellRegistry.LoadAndRegisterAll()
        -> SkillFactory.SkillToItemObject()
@@ -194,3 +193,20 @@ The `LHTest_LeftGripTransform` experiment was removed from registration. Its rec
 The attack experiment now establishes OffHand and queues MovementFlags attack input in the same skill activation, so changing missions or switching skill loadouts cannot invalidate the prerequisite before the attack probe runs.
 
 OffHand candidate selection now prefers a melee item that has at least one usage without `WeaponFlags.NotUsableWithOneHand`. Generic melee is retained only as a fallback for diagnostics.
+
+
+## 2026-09-14 focused native left-hand pass
+
+The standalone OffHand state probe and the previous OffHand attack skill are no longer registered. Real-game testing showed that leaving a forced OffHand active while the player switches weapons can create invalid-looking states such as primarySlot == offhandSlot and can suppress normal melee attacks.
+
+The new `LHTest_NativeLeftHandAttack` is intentionally strict and short-lived:
+
+1. the current MainHand slot is snapshotted;
+2. only a different equipment slot whose **current usage** is already melee and does not have `NotUsableWithOneHand` may be selected;
+3. after `SetWieldedItemIndexAsClient(OffHand,...)`, the code verifies MainHand did not change and MainHand/OffHand are distinct;
+4. normal `MovementFlags` attack input is queued;
+5. no direct attack action is forced while the agent is idle;
+6. only if Bannerlord itself reaches `ActionCodeType.ReleaseMelee`, the exact current native action is re-applied once with only `anf_use_left_hand_during_attack` added;
+7. hit, timeout, state change, or mission cleanup automatically restores the temporary OffHand state.
+
+This is the last native handedness experiment before falling back to a custom left-hand sweep/damage implementation.

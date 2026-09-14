@@ -75,12 +75,11 @@ namespace LeftHandSward
             SkillFactory.RegisterSkill(NativeRightBaselineSkill.Id, new NativeRightBaselineSkill());
             SkillFactory.RegisterSkill(MetaMeshVisualCloneSkill.Id, new MetaMeshVisualCloneSkill());
             SkillFactory.RegisterSkill(AttachWeaponToLeftBoneSkill.Id, new AttachWeaponToLeftBoneSkill());
-            SkillFactory.RegisterSkill(OffHandStateProbeSkill.Id, new OffHandStateProbeSkill());
-            SkillFactory.RegisterSkill(OffHandNativeAttackSkill.Id, new OffHandNativeAttackSkill());
+            SkillFactory.RegisterSkill(NativeLeftHandAttackSkill.Id, new NativeLeftHandAttackSkill());
 
             _skillsRegistered = true;
-            LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills SUCCESS count=5");
-            Debug.Print("[LeftHandSward] Registered 5 New_ZZZF extension skills.");
+            LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills SUCCESS count=4");
+            Debug.Print("[LeftHandSward] Registered 4 New_ZZZF extension skills.");
         }
     }
 
