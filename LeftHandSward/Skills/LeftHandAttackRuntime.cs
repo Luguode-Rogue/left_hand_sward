@@ -31,9 +31,6 @@ namespace LeftHandSward.Skills
         private static float _pendingAttackUntil;
         private static string _lastObservedAttackState;
 
-        private static Agent _offhandProbeAgent;
-        private static float _offhandProbeUntil;
-        private static string _lastOffhandProbeState;
 
         public static bool TryGetActiveMeleeWeapon(Agent agent, out MissionWeapon weapon, out string error)
         {
@@ -236,40 +233,6 @@ namespace LeftHandSward.Skills
             return true;
         }
 
-        public static bool ProbeOffhand(Agent agent, bool cycleNativeOffhand, out string result)
-        {
-            if (agent == null || agent.State != AgentState.Active || agent.Mission == null)
-            {
-                result = "Agent 不可用";
-                return false;
-            }
-
-            string before = DescribeHands(agent);
-            LeftHandSwardLog.Info(
-                "OffhandProbe",
-                "BEGIN cycle=" + cycleNativeOffhand + " before={" + before + "}");
-
-            if (cycleNativeOffhand)
-            {
-                // This is the exact native API used by MissionMainAgentController for
-                // the game's "wield next offhand weapon" input. No custom action name,
-                // animation flag, item flag mutation or unmanaged patch is involved.
-                agent.WieldNextWeapon(Agent.HandIndex.OffHand, Agent.WeaponWieldActionType.Instant);
-            }
-
-            string after = DescribeHands(agent);
-            LeftHandSwardLog.Info(
-                "OffhandProbe",
-                "CALL RETURN cycle=" + cycleNativeOffhand + " after={" + after + "}");
-
-            _offhandProbeAgent = agent;
-            _offhandProbeUntil = agent.Mission.CurrentTime + 1.5f;
-            _lastOffhandProbeState = null;
-
-            result = "副手探针 before={" + before + "} after={" + after + "}";
-            return true;
-        }
-
         public static void Tick(Mission mission)
         {
             if (mission == null)
@@ -314,28 +277,7 @@ namespace LeftHandSward.Skills
                 }
             }
 
-            if (_offhandProbeAgent != null)
-            {
-                if (_offhandProbeAgent.State != AgentState.Active ||
-                    mission.CurrentTime > _offhandProbeUntil)
-                {
-                    LeftHandSwardLog.Info(
-                        "OffhandProbe",
-                        "END state={" + DescribeHands(_offhandProbeAgent) + "}");
-                    _offhandProbeAgent = null;
-                    _offhandProbeUntil = 0f;
-                    _lastOffhandProbeState = null;
-                }
-                else
-                {
-                    string state = DescribeHands(_offhandProbeAgent);
-                    if (!string.Equals(state, _lastOffhandProbeState, StringComparison.Ordinal))
-                    {
-                        _lastOffhandProbeState = state;
-                        LeftHandSwardLog.Info("OffhandProbe", "STATE {" + state + "}");
-                    }
-                }
-            }
+
         }
 
         public static void Cleanup()
@@ -355,10 +297,6 @@ namespace LeftHandSward.Skills
             _queuedNativeAttackFlag = Agent.MovementControlFlag.None;
 
             ClearMeleeObservation();
-
-            _offhandProbeAgent = null;
-            _offhandProbeUntil = 0f;
-            _lastOffhandProbeState = null;
         }
 
         public static void RemoveVisualClone(Agent agent)
