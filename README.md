@@ -121,3 +121,22 @@ The reference uses `Private=False`, so New_ZZZF.dll is not copied into this modu
 ## Dependency
 
 `SubModule.xml` explicitly depends on `New_ZZZF` and orders it before `LeftHandSward`.
+
+
+### Runtime weapon visual cloning
+
+Visual cloning does not construct or register a second `ItemObject`.
+
+The source model is read from the actual runtime weapon entity:
+
+```text
+agent.GetPrimaryWieldedItemIndex()
+    -> agent.GetWeaponEntityFromEquipmentSlot(slot)
+    -> recursively enumerate root/child WeakGameEntity nodes
+    -> GetMetaMesh(i)
+    -> MetaMesh.CreateCopy()
+    -> Skeleton.AddComponentToBone(l_hand, copy)
+```
+
+This is required for crafted/composite weapons whose `ItemObject.MultiMeshName`
+can be empty even though the weapon is visibly rendered in-game.
