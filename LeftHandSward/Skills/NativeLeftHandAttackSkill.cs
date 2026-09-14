@@ -15,7 +15,7 @@ namespace LeftHandSward.Skills
             Cooldown = 0f;
             ResourceCost = 0f;
             Text = new TextObject("实验4-程序IK左手挥砍");
-            Description = new TextObject("要求另一个装备槽有单手近战武器。不播放任何伪左手攻击动作；直接驱动左手IK目标完成挥砍，左手武器来自独立装备槽，碰撞和Blow也使用该左手武器。");
+            Description = new TextObject("要求另一个装备槽有单手近战武器。左手第二把武器只负责视觉、IK和碰撞范围；最终伤害始终使用激活瞬间右手武器，并交给Bannerlord原版StrikeMagnitude/AgentApplyDamage模型计算。");
         }
 
         public override bool Activate(Agent casterAgent)
