@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Start Debugging [net472] (Steam/GOG/Epic)",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}\\LeftHandSward.csproj",
+      "launchConfigurationId": "TargetFramework=net472;Bannerlord"
+    },
+    {
+      "name": "Attach to Bannerlord [net472]",
+      "type": "clr",
+      "request": "attach",
+      "processName": "Bannerlord.exe"
+    },
+    {
+      "name": "Start Debugging [net6] (Xbox)",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}\\LeftHandSward.csproj",
+      "launchConfigurationId": "TargetFramework=net6;Bannerlord"
+    },
+    {
+      "name": "Attach to Bannerlord [net6]",
+      "type": "coreclr",
+      "request": "attach",
+      "processName": "Bannerlord.exe"
+    }
+  ]
+}
