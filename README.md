@@ -95,10 +95,10 @@ The log is intentionally event-based, not per-frame. It records:
 
 - skill activation ID;
 - active weapon and usage class;
-- action name, action index and raw AnimFlags;
-- action state immediately before the native call;
-- `CALL SetActionChannel BEGIN`;
-- `CALL SetActionChannel RETURN`;
+- queued/injected native MovementFlags attack input;
+- action type/stage/direction transitions after native input;
+- primary/offhand wielded slot and weapon info;
+- real OffHand equip/wield/remove native-call boundaries;
 - MetaMesh copy and skeleton attach/remove native-call boundaries;
 - native `OnMeleeHit`;
 - observation timeout;
