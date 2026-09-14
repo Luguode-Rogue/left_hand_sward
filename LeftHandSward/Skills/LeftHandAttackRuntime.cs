@@ -655,12 +655,6 @@ namespace LeftHandSward.Skills
             string skillId,
             out string result)
         {
-            if (!TryResolveLeftReleaseAction(out string actionError))
-            {
-                result = actionError;
-                return false;
-            }
-
             // The native right-hand baseline remains the combat-state entry point.
             // QueueNativeLeftHandAttack establishes a real OffHand and injects the
             // normal native attack input. When Bannerlord reaches ReleaseMelee we
@@ -759,6 +753,17 @@ namespace LeftHandSward.Skills
             {
                 result = "当前主手不是有效近战武器";
                 LeftHandSwardLog.Warn("LeftHandNative", result);
+                return false;
+            }
+
+            if (!IsCurrentUsageOneHandMelee(mainWeapon))
+            {
+                result =
+                    "实验4要求主手当前 usage 可单手使用；"
+                    + "两手武器会在建立 OffHand 后触发原生换装/usage 切换，污染测试。";
+                LeftHandSwardLog.Warn(
+                    "LeftHandNative",
+                    result + " mainWeapon=" + DescribeMissionWeapon(mainWeapon));
                 return false;
             }
 
@@ -880,7 +885,7 @@ namespace LeftHandSward.Skills
 
             LeftHandSwardLog.Info(
                 "LeftHandNative",
-                "LEFT STANCE ARMED"
+                "COLLIDER RELEASE ARMED"
                 + " skill=" + skillId
                 + " primary=" + _leftHandRewritePrimarySlot
                 + " offHand=" + _leftHandRewriteOffHandSlot
@@ -902,8 +907,8 @@ namespace LeftHandSward.Skills
             }
 
             result =
-                "已建立原生 OffHand、强制 LeftStance，并排队实验1原生攻击；"
-                + "ReleaseMelee 将切到带左手 collider 的原生 action";
+                "已建立原生 OffHand，并排队实验1原生攻击；"
+                + "ReleaseMelee 将切到带 use_left_hand_during_attack 的自定义 action";
             return true;
         }
 
@@ -1097,6 +1102,21 @@ namespace LeftHandSward.Skills
             bool blowMatchesPrimary = blowSlot == (int)primary;
             bool blowMatchesOffHand = blowSlot == (int)offHand;
 
+            sbyte attackBone = collisionData.AttackBoneIndex;
+            sbyte mainItemBone =
+                attacker.Monster == null
+                    ? (sbyte)-1
+                    : attacker.Monster.MainHandItemBoneIndex;
+            sbyte offItemBone =
+                attacker.Monster == null
+                    ? (sbyte)-1
+                    : attacker.Monster.OffHandItemBoneIndex;
+
+            bool attackBoneMatchesMain =
+                attackBone >= 0 && attackBone == mainItemBone;
+            bool attackBoneMatchesOff =
+                attackBone >= 0 && attackBone == offItemBone;
+
             LeftHandSwardLog.Info(
                 "NativeBlow",
                 "skill=" + _pendingAttackSkillId
@@ -1108,10 +1128,74 @@ namespace LeftHandSward.Skills
                 + " collisionMatchesOffHand=" + matchesOffHand
                 + " blowMatchesPrimary=" + blowMatchesPrimary
                 + " blowMatchesOffHand=" + blowMatchesOffHand
+                + " attackBone=" + attackBone
+                + " mainItemBone=" + mainItemBone
+                + " offItemBone=" + offItemBone
+                + " attackBoneMatchesMain=" + attackBoneMatchesMain
+                + " attackBoneMatchesOff=" + attackBoneMatchesOff
+                + " alternative=" + collisionData.IsAlternativeAttack
+                + " blowAttackType=" + blow.AttackType
                 + " attackerWeapon={" + DescribeMissionWeapon(attackerWeapon) + "}"
                 + " result=" + collisionData.CollisionResult
                 + " blockedWithShield=" + collisionData.AttackBlockedWithShield
                 + " victim=" + SafeAgentName(victim));
+        }
+
+        public static bool StartNativeAlternativeAttackProbe(
+            Agent agent,
+            string skillId,
+            out string result)
+        {
+            if (agent == null || agent.State != AgentState.Active)
+            {
+                result = "Agent 不可用";
+                return false;
+            }
+
+            if (agent.Mission == null || agent.Mission.MainAgent != agent)
+            {
+                result = "原生 AlternativeAttack 探针只支持 MainAgent";
+                LeftHandSwardLog.Warn("AlternativeAttack", result);
+                return false;
+            }
+
+            if (_pendingAttackAgent != null)
+            {
+                result = "上一轮 melee 观察尚未结束";
+                LeftHandSwardLog.Warn("AlternativeAttack", result);
+                return false;
+            }
+
+            LeftHandSwardLog.Info(
+                "AlternativeAttack",
+                "KICKCLEAR BEGIN"
+                + " skill=" + skillId
+                + " state={" + DescribeAgentAction(agent) + "}"
+                + " hands={" + DescribeHands(agent) + "}");
+
+            BeginMeleeObservation(agent, skillId, 2.5f);
+
+            bool accepted = agent.KickClear();
+
+            LeftHandSwardLog.Info(
+                "AlternativeAttack",
+                "KICKCLEAR RETURN"
+                + " accepted=" + accepted
+                + " actionType=" + agent.GetCurrentActionType(1)
+                + " action=" + agent.GetCurrentAction(1).GetName()
+                + " hands={" + DescribeHands(agent) + "}");
+
+            if (!accepted)
+            {
+                ClearMeleeObservation();
+                result = "KickClear 被原生状态机拒绝";
+                return false;
+            }
+
+            result =
+                "已调用原生 KickClear；根据装备状态观察 Kick / WeaponBash / ShieldBash 的 "
+                + "NativeBlow slot、AttackBoneIndex 与 IsAlternativeAttack";
+            return true;
         }
 
         public static void Report(string message)
@@ -1152,7 +1236,7 @@ namespace LeftHandSward.Skills
 
                 LeftHandSwardLog.Info(
                     "LeftHandWeapon",
-                    "Selected secondary visual weapon"
+                    "Selected secondary weapon candidate"
                     + " slot=" + slot
                     + " weapon=" + DescribeMissionWeapon(weapon));
                 return slot;
