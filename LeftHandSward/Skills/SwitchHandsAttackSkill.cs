@@ -11,11 +11,11 @@ namespace LeftHandSward.Skills
         public SwitchHandsAttackSkill()
         {
             SkillID = Id;
-            Type = SPSkillType.MainActive;
+            Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
             Text = new TextObject("左手测试-换手Flags");
-            Description = new TextObject("按主主动技能键 E 独立播放右挥释放动作，测试 switch-item-between-hands + use-left-hand，不经过左键攻击。");
+            Description = new TextObject("按副主动技能键 LeftAlt 独立播放右挥释放动作，测试 switch-item-between-hands + use-left-hand，不经过左键攻击。");
         }
 
         public override bool Activate(Agent casterAgent)
