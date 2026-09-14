@@ -733,7 +733,7 @@ namespace LeftHandSward.Skills
 
             WeakGameEntity weaponEntity =
                 agent.GetWeaponEntityFromEquipmentSlot(primarySlot);
-            if (weaponEntity == null || !weaponEntity.IsValid)
+            if (!weaponEntity.IsValid)
             {
                 result = "当前主手 WeaponEntity 无效";
                 return false;
@@ -1402,7 +1402,6 @@ namespace LeftHandSward.Skills
                 mission.MainAgent != agent ||
                 state.Skeleton == null ||
                 !state.Skeleton.IsValid ||
-                state.WeaponEntity == null ||
                 !state.WeaponEntity.IsValid)
             {
                 EndCustomLeftHandAttack("invalid agent/skeleton/weapon entity");
@@ -1552,7 +1551,6 @@ namespace LeftHandSward.Skills
                 state.Agent.AgentVisuals == null ||
                 state.Skeleton == null ||
                 !state.Skeleton.IsValid ||
-                state.WeaponEntity == null ||
                 !state.WeaponEntity.IsValid)
             {
                 return;
