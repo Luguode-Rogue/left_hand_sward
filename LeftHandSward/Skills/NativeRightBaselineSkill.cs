@@ -11,11 +11,11 @@ namespace LeftHandSward.Skills
         public NativeRightBaselineSkill()
         {
             SkillID = Id;
-            Type = SPSkillType.MainActive;
+            Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
             Text = new TextObject("左手测试-普通动作基线");
-            Description = new TextObject("按主主动技能键 E 独立播放普通单手右挥释放动作，不经过左键攻击，作为 SetActionChannel 对照组。");
+            Description = new TextObject("按副主动技能键 LeftAlt 独立播放普通单手右挥释放动作，不经过左键攻击，作为 SetActionChannel 对照组。");
         }
 
         public override bool Activate(Agent casterAgent)
