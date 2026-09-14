@@ -14,19 +14,31 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("左手测试-真实副手剑");
-            Description = new TextObject("按 LeftAlt：复制当前主手武器为 Mission 临时副本，仅给副本添加 HeldInOffHand，然后通过原生装备 API 尝试建立真实 OffHand。");
+            Text = new TextObject("左手测试-视觉+原生左挥");
+            Description = new TextObject("按 LeftAlt：只复制当前武器模型到 l_hand，然后通过原生 MovementFlags 发起 AttackLeft。不会构造 ItemObject，也不会修改装备。");
         }
 
         public override bool Activate(Agent casterAgent)
         {
             LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
 
-            bool ok = LeftHandAttackRuntime.EquipTemporaryOffhandClone(
-                casterAgent,
-                out string result);
+            if (!LeftHandAttackRuntime.AddLeftHandVisualClone(
+                    casterAgent,
+                    2.5f,
+                    out string visualResult))
+            {
+                LeftHandAttackRuntime.Report(Id + " 视觉阶段失败: " + visualResult);
+                return false;
+            }
 
-            LeftHandAttackRuntime.Report(Id + " " + result);
+            bool ok = LeftHandAttackRuntime.QueueNativeAttack(
+                casterAgent,
+                Id,
+                Agent.MovementControlFlag.AttackLeft,
+                out string attackResult);
+
+            LeftHandAttackRuntime.Report(
+                Id + " visual={" + visualResult + "} nativeAttack={" + attackResult + "}");
             return ok;
         }
     }
