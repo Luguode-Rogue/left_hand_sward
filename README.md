@@ -33,8 +33,12 @@ The IDs intentionally remain the same as the earlier in-core experiments so exis
 ## Extension flow
 
 ```text
-LeftHandSward.SubModule.OnSubModuleLoad
+LeftHandSward.SubModule.OnGameStart
     -> SkillFactory.RegisterSkill(...)
+
+# Important: do not touch SkillFactory during OnSubModuleLoad.
+# New_ZZZF's static SkillFactory initialization constructs NullSkill,
+# and that constructor reads Game.Current, which is still null during submodule load.
 
 New_ZZZF game initialization
     -> SkillFactory.SkillToItemObject()
