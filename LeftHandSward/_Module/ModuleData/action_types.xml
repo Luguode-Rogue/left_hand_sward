@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <action_types>
   <action
-    name="act_lhs_release_leftarm_1h"
+    name="act_lhs_release_leftarm_weapon_1h"
+    type="actt_release_melee"
+    usage_direction="ud_attack_right"
+    action_stage="as_attack_release" />
+  <action
+    name="act_lhs_release_leftarm_weapon_2h"
     type="actt_release_melee"
     usage_direction="ud_attack_right"
     action_stage="as_attack_release" />
