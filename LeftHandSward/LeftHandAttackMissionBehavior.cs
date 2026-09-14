@@ -11,6 +11,7 @@ namespace LeftHandSward
     {
         public LeftHandAttackMissionBehavior()
         {
+            LeftHandSwardLog.Info("Mission", "LeftHandAttackMissionBehavior ctor");
             LeftHandAttackRuntime.Cleanup();
         }
 
@@ -29,6 +30,11 @@ namespace LeftHandSward
             AttackCollisionData collisionData)
         {
             base.OnMeleeHit(attacker, victim, isCanceled, collisionData);
+            LeftHandSwardLog.Info(
+                "Mission",
+                "OnMeleeHit canceled=" + isCanceled
+                + " dir=" + collisionData.AttackDirection
+                + " progress=" + collisionData.AttackProgress);
             LeftHandAttackRuntime.NotifyMeleeHit(attacker, victim, isCanceled, collisionData);
         }
 
@@ -39,6 +45,7 @@ namespace LeftHandSward
             KillingBlow killingBlow)
         {
             base.OnAgentRemoved(affectedAgent, affectorAgent, agentState, killingBlow);
+            LeftHandSwardLog.Info("Mission", "OnAgentRemoved state=" + agentState);
             LeftHandAttackRuntime.RemoveVisualClone(affectedAgent);
         }
     }
