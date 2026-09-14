@@ -15,7 +15,7 @@ namespace LeftHandSward.Skills
             Cooldown = 0f;
             ResourceCost = 0f;
             Text = new TextObject("实验4-左臂原生命中");
-            Description = new TextObject("项目主线实验：建立真实OffHand剑，仍由MovementFlags进入原生melee状态机；ReleaseMelee切到以原版OffHand盾击为motion donor的左臂动作，并带use_left_hand_during_attack。成功标准是左臂/左手剑真实运动并由左侧动作触发原生命中；Blow继续按主手武器计算伤害也可接受。");
+            Description = new TextObject("项目主线实验：不再建立真实OffHand，也不要求第二把武器或单手武器。当前主手只要能进入原生melee状态机即可；其模型会复制到左手，ReleaseMelee切到原版OffHand盾击motion并带use_left_hand_during_attack。Blow/伤害继续按主手武器计算。");
         }
 
         public override bool Activate(Agent casterAgent)
