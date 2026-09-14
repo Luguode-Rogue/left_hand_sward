@@ -12,10 +12,10 @@ The extension:
 
 - references the installed `New_ZZZF.dll`;
 - derives skills directly from `New_ZZZF.SkillBase`;
-- registers them through `SkillFactory.RegisterSkill` during `OnSubModuleLoad`;
+- registers them through `SkillFactory.RegisterSkill` from Harmony prefixes on New_ZZZF's campaign initialization callbacks;
 - declares `New_ZZZF` as a module dependency so it loads first;
 - owns its own `MissionBehavior` for left-hand visual lifetime and native melee-hit observation;
-- does not patch or modify New_ZZZF.
+- does not modify New_ZZZF source or binaries; it only patches the two New_ZZZF lifecycle callbacks needed to register external skills at the safe initialization point.
 
 ## Registered skills
 
@@ -33,16 +33,23 @@ The IDs intentionally remain the same as the earlier in-core experiments so exis
 ## Extension flow
 
 ```text
-LeftHandSward.SubModule.OnGameStart
-    -> SkillFactory.RegisterSkill(...)
+LeftHandSward.OnSubModuleLoad
+    -> install Harmony lifecycle prefixes
+    -> DO NOT touch SkillFactory yet
 
-# Important: do not touch SkillFactory during OnSubModuleLoad.
-# New_ZZZF's static SkillFactory initialization constructs NullSkill,
-# and that constructor reads Game.Current, which is still null during submodule load.
+Campaign starts loading
+    -> OnGameStart
+    -> still too early for DefaultItemCategories
+    -> no Campaign SkillFactory access
 
-New_ZZZF game initialization
-    -> SkillFactory.SkillToItemObject()
-    -> SkillCatalog reads SkillFactory._skillRegistry
+New_ZZZF.OnNewGameCreated / OnGameLoaded is about to run
+    -> LeftHandSward Harmony Prefix
+    -> SkillFactory.RegisterSkill(...) for all 6 external skills
+    -> New_ZZZF original callback continues
+       -> CompositeSpellRegistry.LoadAndRegisterAll()
+       -> SkillFactory.SkillToItemObject()
+          (includes LeftHandSward skills)
+       -> troop skill XML parsing sees the external skill IDs
 
 Player equips an LHTest_* MainActive skill
     -> New_ZZZF AgentSkillComponent handles E / cooldown / stamina
@@ -52,6 +59,16 @@ LeftHandSward MissionBehavior
     -> visual clone cleanup
     -> OnMeleeHit observation
 ```
+
+### Why registration is not done earlier
+
+New_ZZZF's static `SkillFactory` constructs `NullSkill`. In Campaign:
+
+- during `OnSubModuleLoad`, `Game.Current` is still null;
+- during `OnGameStart`, `Game.Current` exists but `DefaultItemCategories.Unassigned` is not initialized yet;
+- at `New_ZZZF.OnNewGameCreated / OnGameLoaded`, the object system is ready because New_ZZZF itself performs its skill ItemObject initialization there.
+
+The Harmony Prefix therefore registers external skills at the same safe lifecycle point, immediately before New_ZZZF processes its registry.
 
 ## Build
 
