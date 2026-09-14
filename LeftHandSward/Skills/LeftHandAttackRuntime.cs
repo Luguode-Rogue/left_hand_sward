@@ -710,6 +710,12 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
+            LeftHandSwardLog.Info(
+                "LeftHandNative",
+                "ACTION REGISTERED"
+                + " name=" + LeftReleaseActionName
+                + " index=" + _leftReleaseAction.Index
+                + " type=" + type);
             return true;
         }
 
