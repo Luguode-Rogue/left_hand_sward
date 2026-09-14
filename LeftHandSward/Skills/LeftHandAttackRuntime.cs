@@ -1207,8 +1207,8 @@ namespace LeftHandSward.Skills
                     continue;
 
                 LeftHandSwardLog.Info(
-                    "LeftHandNative",
-                    "Selected strict OffHand candidate"
+                    "LeftHandWeapon",
+                    "Selected secondary visual weapon"
                     + " slot=" + slot
                     + " weapon=" + DescribeMissionWeapon(weapon));
                 return slot;
@@ -1822,16 +1822,6 @@ namespace LeftHandSward.Skills
                 out int speedBonus);
 
             int damage = collisionData.InflictedDamage;
-            if (damage <= 0)
-            {
-                LeftHandSwardLog.Info(
-                    "LeftHandDamage",
-                    "CALC RETURN damage=0"
-                    + " baseMagnitude=" + collisionData.BaseMagnitude
-                    + " absorbed=" + collisionData.AbsorbedByArmor
-                    + " speedBonus=" + speedBonus);
-                return true;
-            }
 
             Blow blow = new Blow(attacker.Index);
             blow.DamageType = damageUsage.SwingDamageType;
