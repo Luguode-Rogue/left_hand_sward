@@ -1075,6 +1075,46 @@ namespace LeftHandSward.Skills
             ClearMeleeObservation();
         }
 
+        public static void NotifyRegisterBlow(
+            Agent attacker,
+            Agent victim,
+            Blow blow,
+            AttackCollisionData collisionData,
+            in MissionWeapon attackerWeapon)
+        {
+            if (_pendingAttackAgent == null || string.IsNullOrEmpty(_pendingAttackSkillId))
+                return;
+
+            if (attacker != _pendingAttackAgent)
+                return;
+
+            int affectorSlot = collisionData.AffectorWeaponSlotOrMissileIndex;
+            int blowSlot = blow.WeaponRecord.AffectorWeaponSlotOrMissileIndex;
+            EquipmentIndex primary = attacker.GetPrimaryWieldedItemIndex();
+            EquipmentIndex offHand = attacker.GetOffhandWieldedItemIndex();
+
+            bool matchesPrimary = affectorSlot == (int)primary;
+            bool matchesOffHand = affectorSlot == (int)offHand;
+            bool blowMatchesPrimary = blowSlot == (int)primary;
+            bool blowMatchesOffHand = blowSlot == (int)offHand;
+
+            LeftHandSwardLog.Info(
+                "NativeBlow",
+                "skill=" + _pendingAttackSkillId
+                + " affectorSlot=" + affectorSlot
+                + " blowSlot=" + blowSlot
+                + " primary=" + primary
+                + " offHand=" + offHand
+                + " collisionMatchesPrimary=" + matchesPrimary
+                + " collisionMatchesOffHand=" + matchesOffHand
+                + " blowMatchesPrimary=" + blowMatchesPrimary
+                + " blowMatchesOffHand=" + blowMatchesOffHand
+                + " attackerWeapon={" + DescribeMissionWeapon(attackerWeapon) + "}"
+                + " result=" + collisionData.CollisionResult
+                + " blockedWithShield=" + collisionData.AttackBlockedWithShield
+                + " victim=" + SafeAgentName(victim));
+        }
+
         public static void Report(string message)
         {
             LeftHandSwardLog.Info("Report", message);
