@@ -53,6 +53,30 @@ namespace LeftHandSward
             LeftHandAttackRuntime.NotifyMeleeHit(attacker, victim, isCanceled, collisionData);
         }
 
+        public override void OnRegisterBlow(
+            Agent attacker,
+            Agent victim,
+            WeakGameEntity realHitEntity,
+            Blow blow,
+            ref AttackCollisionData collisionData,
+            in MissionWeapon attackerWeapon)
+        {
+            base.OnRegisterBlow(
+                attacker,
+                victim,
+                realHitEntity,
+                blow,
+                ref collisionData,
+                in attackerWeapon);
+
+            LeftHandAttackRuntime.NotifyRegisterBlow(
+                attacker,
+                victim,
+                blow,
+                collisionData,
+                in attackerWeapon);
+        }
+
         public override void OnAgentRemoved(
             Agent affectedAgent,
             Agent affectorAgent,
