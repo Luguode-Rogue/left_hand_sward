@@ -14,13 +14,21 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("左手测试-视觉+副手状态+原生攻击");
-            Description = new TextObject("按 LeftAlt：复制武器到左手、调用原生副手切换，再通过 MovementFlags 发起真实原生攻击。全程不手动指定 release 动作。");
+            Text = new TextObject("左手测试-视觉+真实副手+原生攻击");
+            Description = new TextObject("按 LeftAlt：建立真实 OffHand 临时副本，同时保留左手视觉副本，再通过 MovementFlags 发起原生攻击。");
         }
 
         public override bool Activate(Agent casterAgent)
         {
             LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
+
+            if (!LeftHandAttackRuntime.EquipTemporaryOffhandClone(
+                    casterAgent,
+                    out string offhandResult))
+            {
+                LeftHandAttackRuntime.Report(Id + " 副手装备失败: " + offhandResult);
+                return false;
+            }
 
             if (!LeftHandAttackRuntime.AddLeftHandVisualClone(
                     casterAgent,
@@ -31,11 +39,6 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            LeftHandAttackRuntime.ProbeOffhand(
-                casterAgent,
-                true,
-                out string probeResult);
-
             bool attackOk = LeftHandAttackRuntime.QueueNativeAttack(
                 casterAgent,
                 Id,
@@ -44,8 +47,8 @@ namespace LeftHandSward.Skills
 
             LeftHandAttackRuntime.Report(
                 Id
+                + " offhand={" + offhandResult + "}"
                 + " visual={" + visualResult + "}"
-                + " offhand={" + probeResult + "}"
                 + " nativeAttack={" + attackResult + "}");
             return attackOk;
         }
