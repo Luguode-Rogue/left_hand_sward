@@ -37,4 +37,8 @@
       <Tags />
     </SubModule>
   </SubModules>
+
+  <!-- action_sets.xml/action_types.xml are native animation resources.
+       Bannerlord loads them through ModuleData/project.mbproj (soln_action_sets /
+       soln_action_types), not through the managed <Xmls> list here. -->
 </Module>
