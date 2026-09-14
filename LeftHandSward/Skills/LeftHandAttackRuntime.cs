@@ -685,7 +685,7 @@ namespace LeftHandSward.Skills
             if (_leftReleaseAction.Index < 0)
             {
                 error =
-                    "左手原生 ReleaseMelee action 未注册: "
+                    "左臂 ReleaseMelee action 未注册: "
                     + LeftReleaseActionName
                     + "。请先重新编译模块，让构建步骤生成左手 AnimationClip TPAC。";
                 LeftHandSwardLog.Warn("LeftHandNative", error);
@@ -697,7 +697,7 @@ namespace LeftHandSward.Skills
             if (type != Agent.ActionCodeType.ReleaseMelee)
             {
                 error =
-                    "左手 action 类型错误: "
+                    "左臂 action 类型错误: "
                     + LeftReleaseActionName
                     + " type=" + type;
                 LeftHandSwardLog.Warn("LeftHandNative", error);
@@ -885,7 +885,7 @@ namespace LeftHandSward.Skills
 
             LeftHandSwardLog.Info(
                 "LeftHandNative",
-                "COLLIDER RELEASE ARMED"
+                "LEFT ARM RELEASE ARMED"
                 + " skill=" + skillId
                 + " primary=" + _leftHandRewritePrimarySlot
                 + " offHand=" + _leftHandRewriteOffHandSlot
@@ -908,7 +908,7 @@ namespace LeftHandSward.Skills
 
             result =
                 "已建立原生 OffHand，并排队实验1原生攻击；"
-                + "ReleaseMelee 将切到带 use_left_hand_during_attack 的自定义 action";
+                + "ReleaseMelee 将切到 Native OffHand 盾击 motion + use_left_hand_during_attack 的自定义 action";
             return true;
         }
 
