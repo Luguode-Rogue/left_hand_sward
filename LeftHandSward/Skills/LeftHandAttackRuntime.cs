@@ -20,9 +20,20 @@ namespace LeftHandSward.Skills
 
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
 
+        // A SkillBase.Activate call can happen outside the exact input collection point.
+        // Queue the request and inject it from IPlayerInputEffector on the next collection.
+        private static Agent _queuedNativeAttackAgent;
+        private static string _queuedNativeAttackSkillId;
+        private static Agent.MovementControlFlag _queuedNativeAttackFlag;
+
         private static Agent _pendingAttackAgent;
         private static string _pendingAttackSkillId;
         private static float _pendingAttackUntil;
+        private static string _lastObservedAttackState;
+
+        private static Agent _offhandProbeAgent;
+        private static float _offhandProbeUntil;
+        private static string _lastOffhandProbeState;
 
         public static bool TryGetActiveMeleeWeapon(Agent agent, out MissionWeapon weapon, out string error)
         {
@@ -39,14 +50,14 @@ namespace LeftHandSward.Skills
             weapon = agent.WieldedWeapon;
             if (weapon.IsEmpty || weapon.Item == null || weapon.CurrentUsageItem == null)
             {
-                error = "当前没有有效武器";
+                error = "当前没有有效主手武器";
                 LeftHandSwardLog.Warn("Weapon", error);
                 return false;
             }
 
             if (!weapon.CurrentUsageItem.IsMeleeWeapon)
             {
-                error = "当前武器不是近战武器";
+                error = "当前主手武器不是近战武器";
                 LeftHandSwardLog.Warn("Weapon", error + " item=" + weapon.Item.StringId);
                 return false;
             }
@@ -55,69 +66,100 @@ namespace LeftHandSward.Skills
                 "Weapon",
                 "Active melee weapon item=" + weapon.Item.StringId
                 + " usage=" + weapon.CurrentUsageItem.WeaponClass
-                + " agent=" + SafeAgentName(agent));
+                + " agent=" + SafeAgentName(agent)
+                + " hands={" + DescribeHands(agent) + "}");
             return true;
         }
 
-        public static bool PlayAction(Agent agent, string actionName, AnimFlags flags, out string result)
+        public static bool QueueNativeAttack(
+            Agent agent,
+            string skillId,
+            Agent.MovementControlFlag attackFlag,
+            out string result)
         {
-            if (agent == null)
+            if (!TryGetActiveMeleeWeapon(agent, out _, out string error))
             {
-                result = "Agent=null";
-                LeftHandSwardLog.Error("Action", result + " action=" + actionName);
+                result = error;
                 return false;
             }
 
-            ActionIndexCache action = ActionIndexCache.Create(actionName);
-            if (action.Index < 0)
+            if (agent.Mission == null || agent.Mission.MainAgent != agent)
             {
-                result = "动作不存在: " + actionName;
-                LeftHandSwardLog.Error("Action", result);
+                result = "当前原生输入实验只支持 MainAgent";
+                LeftHandSwardLog.Warn("NativeAttack", result + " skill=" + skillId);
                 return false;
             }
 
-            string before = DescribeAgentAction(agent);
+            _queuedNativeAttackAgent = agent;
+            _queuedNativeAttackSkillId = skillId;
+            _queuedNativeAttackFlag = attackFlag;
+
+            result = "已排队原生攻击输入: " + attackFlag;
             LeftHandSwardLog.Info(
-                "Action",
-                "CALL SetActionChannel BEGIN"
-                + " action=" + actionName
-                + " actionIndex=" + action.Index
-                + " flags=" + flags
-                + " flagsRaw=" + (ulong)flags
-                + " before={" + before + "}");
+                "NativeAttack",
+                "QUEUED skill=" + skillId
+                + " flag=" + attackFlag
+                + " state={" + DescribeAgentAction(agent) + "}"
+                + " hands={" + DescribeHands(agent) + "}");
+            return true;
+        }
 
-            bool accepted = agent.SetActionChannel(
-                1,
-                action,
-                true,
-                flags,
-                0f,
-                1f,
-                -0.1f,
-                0.2f,
-                0f,
-                false,
-                -0.1f,
-                0,
-                true);
+        public static Agent.EventControlFlag CollectPlayerInput(Mission mission)
+        {
+            if (_queuedNativeAttackAgent == null || string.IsNullOrEmpty(_queuedNativeAttackSkillId))
+                return Agent.EventControlFlag.None;
 
-            string after = DescribeAgentAction(agent);
+            Agent agent = _queuedNativeAttackAgent;
+            string skillId = _queuedNativeAttackSkillId;
+            Agent.MovementControlFlag attackFlag = _queuedNativeAttackFlag;
+
+            _queuedNativeAttackAgent = null;
+            _queuedNativeAttackSkillId = null;
+            _queuedNativeAttackFlag = Agent.MovementControlFlag.None;
+
+            if (mission == null || mission.MainAgent != agent || agent.State != AgentState.Active)
+            {
+                LeftHandSwardLog.Warn(
+                    "NativeAttack",
+                    "DROP queued input skill=" + skillId + " because MainAgent/Agent state is invalid");
+                return Agent.EventControlFlag.None;
+            }
+
+            if (!TryGetActiveMeleeWeapon(agent, out _, out string error))
+            {
+                LeftHandSwardLog.Warn(
+                    "NativeAttack",
+                    "DROP queued input skill=" + skillId + " reason=" + error);
+                return Agent.EventControlFlag.None;
+            }
+
             LeftHandSwardLog.Info(
-                "Action",
-                "CALL SetActionChannel RETURN"
-                + " accepted=" + accepted
-                + " action=" + actionName
-                + " after={" + after + "}");
+                "NativeAttack",
+                "INJECT BEGIN skill=" + skillId
+                + " flag=" + attackFlag
+                + " beforeFlags=" + agent.MovementFlags
+                + " state={" + DescribeAgentAction(agent) + "}"
+                + " hands={" + DescribeHands(agent) + "}");
 
-            result = "SetActionChannel=" + accepted
-                     + " action=" + actionName
-                     + " " + after;
-            return accepted;
+            // This is the same entry point that was already proven by
+            // NativeMeleeCollisionTestBehavior: MissionMainAgentController clears
+            // MovementFlags first, then gathers IPlayerInputEffector input.
+            agent.MovementFlags |= attackFlag;
+
+            LeftHandSwardLog.Info(
+                "NativeAttack",
+                "INJECT RETURN skill=" + skillId
+                + " movementFlags=" + agent.MovementFlags);
+
+            BeginMeleeObservation(agent, skillId, 2.5f);
+            return Agent.EventControlFlag.None;
         }
 
         public static bool AddLeftHandVisualClone(Agent agent, float lifetimeSeconds, out string result)
         {
-            LeftHandSwardLog.Info("VisualClone", "BEGIN agent=" + SafeAgentName(agent) + " lifetime=" + lifetimeSeconds);
+            LeftHandSwardLog.Info(
+                "VisualClone",
+                "BEGIN agent=" + SafeAgentName(agent) + " lifetime=" + lifetimeSeconds);
 
             if (!TryGetActiveMeleeWeapon(agent, out MissionWeapon weapon, out string error))
             {
@@ -128,6 +170,7 @@ namespace LeftHandSward.Skills
             if (agent.AgentVisuals == null)
             {
                 result = "AgentVisuals=null";
+                LeftHandSwardLog.Warn("VisualClone", result);
                 return false;
             }
 
@@ -135,6 +178,7 @@ namespace LeftHandSward.Skills
             if (string.IsNullOrEmpty(meshName))
             {
                 result = "当前物品没有 MultiMeshName";
+                LeftHandSwardLog.Warn("VisualClone", result);
                 return false;
             }
 
@@ -142,6 +186,7 @@ namespace LeftHandSward.Skills
             if (skeleton == null || !skeleton.IsValid)
             {
                 result = "Skeleton 无效";
+                LeftHandSwardLog.Warn("VisualClone", result);
                 return false;
             }
 
@@ -149,6 +194,7 @@ namespace LeftHandSward.Skills
             if (leftHandBone < 0)
             {
                 result = "找不到 l_hand 骨骼";
+                LeftHandSwardLog.Warn("VisualClone", result);
                 return false;
             }
 
@@ -181,11 +227,46 @@ namespace LeftHandSward.Skills
                 Skeleton = skeleton,
                 BoneIndex = leftHandBone,
                 MetaMesh = clone,
-                ExpireAt = (agent.Mission != null ? agent.Mission.CurrentTime : 0f) + Math.Max(0.25f, lifetimeSeconds)
+                ExpireAt = (agent.Mission != null ? agent.Mission.CurrentTime : 0f)
+                           + Math.Max(0.25f, lifetimeSeconds)
             });
 
             result = "已复制视觉模型到 l_hand: " + meshName + " bone=" + leftHandBone;
             LeftHandSwardLog.Info("VisualClone", "SUCCESS " + result);
+            return true;
+        }
+
+        public static bool ProbeOffhand(Agent agent, bool cycleNativeOffhand, out string result)
+        {
+            if (agent == null || agent.State != AgentState.Active || agent.Mission == null)
+            {
+                result = "Agent 不可用";
+                return false;
+            }
+
+            string before = DescribeHands(agent);
+            LeftHandSwardLog.Info(
+                "OffhandProbe",
+                "BEGIN cycle=" + cycleNativeOffhand + " before={" + before + "}");
+
+            if (cycleNativeOffhand)
+            {
+                // This is the exact native API used by MissionMainAgentController for
+                // the game's "wield next offhand weapon" input. No custom action name,
+                // animation flag, item flag mutation or unmanaged patch is involved.
+                agent.WieldNextWeapon(Agent.HandIndex.OffHand, Agent.WeaponWieldActionType.Instant);
+            }
+
+            string after = DescribeHands(agent);
+            LeftHandSwardLog.Info(
+                "OffhandProbe",
+                "CALL RETURN cycle=" + cycleNativeOffhand + " after={" + after + "}");
+
+            _offhandProbeAgent = agent;
+            _offhandProbeUntil = agent.Mission.CurrentTime + 1.5f;
+            _lastOffhandProbeState = null;
+
+            result = "副手探针 before={" + before + "} after={" + after + "}";
             return true;
         }
 
@@ -205,25 +286,78 @@ namespace LeftHandSward.Skills
                 }
             }
 
-            if (_pendingAttackSkillId != null && mission.CurrentTime > _pendingAttackUntil)
+            if (_pendingAttackAgent != null && _pendingAttackSkillId != null)
             {
-                LeftHandSwardLog.Warn("MeleeObservation", _pendingAttackSkillId + " timeout: no OnMeleeHit");
-                Report(_pendingAttackSkillId + " 观察窗口结束：未收到 OnMeleeHit");
-                _pendingAttackAgent = null;
-                _pendingAttackSkillId = null;
-                _pendingAttackUntil = 0f;
+                if (_pendingAttackAgent.State != AgentState.Active)
+                {
+                    ClearMeleeObservation();
+                }
+                else
+                {
+                    string state = DescribeAttackObservationState(_pendingAttackAgent);
+                    if (!string.Equals(state, _lastObservedAttackState, StringComparison.Ordinal))
+                    {
+                        _lastObservedAttackState = state;
+                        LeftHandSwardLog.Info(
+                            "NativeAttackState",
+                            "skill=" + _pendingAttackSkillId + " {" + state + "}");
+                    }
+
+                    if (mission.CurrentTime > _pendingAttackUntil)
+                    {
+                        LeftHandSwardLog.Warn(
+                            "MeleeObservation",
+                            _pendingAttackSkillId + " timeout: no OnMeleeHit");
+                        Report(_pendingAttackSkillId + " 观察窗口结束：未收到 OnMeleeHit");
+                        ClearMeleeObservation();
+                    }
+                }
+            }
+
+            if (_offhandProbeAgent != null)
+            {
+                if (_offhandProbeAgent.State != AgentState.Active ||
+                    mission.CurrentTime > _offhandProbeUntil)
+                {
+                    LeftHandSwardLog.Info(
+                        "OffhandProbe",
+                        "END state={" + DescribeHands(_offhandProbeAgent) + "}");
+                    _offhandProbeAgent = null;
+                    _offhandProbeUntil = 0f;
+                    _lastOffhandProbeState = null;
+                }
+                else
+                {
+                    string state = DescribeHands(_offhandProbeAgent);
+                    if (!string.Equals(state, _lastOffhandProbeState, StringComparison.Ordinal))
+                    {
+                        _lastOffhandProbeState = state;
+                        LeftHandSwardLog.Info("OffhandProbe", "STATE {" + state + "}");
+                    }
+                }
             }
         }
 
         public static void Cleanup()
         {
-            LeftHandSwardLog.Info("Runtime", "Cleanup visualClones=" + _visualClones.Count + " pendingSkill=" + (_pendingAttackSkillId ?? "null"));
+            LeftHandSwardLog.Info(
+                "Runtime",
+                "Cleanup visualClones=" + _visualClones.Count
+                + " queuedSkill=" + (_queuedNativeAttackSkillId ?? "null")
+                + " pendingSkill=" + (_pendingAttackSkillId ?? "null"));
+
             for (int i = _visualClones.Count - 1; i >= 0; i--)
                 RemoveVisualCloneAt(i);
 
-            _pendingAttackAgent = null;
-            _pendingAttackSkillId = null;
-            _pendingAttackUntil = 0f;
+            _queuedNativeAttackAgent = null;
+            _queuedNativeAttackSkillId = null;
+            _queuedNativeAttackFlag = Agent.MovementControlFlag.None;
+
+            ClearMeleeObservation();
+
+            _offhandProbeAgent = null;
+            _offhandProbeUntil = 0f;
+            _lastOffhandProbeState = null;
         }
 
         public static void RemoveVisualClone(Agent agent)
@@ -242,13 +376,17 @@ namespace LeftHandSward.Skills
         {
             if (agent == null || agent.Mission == null || string.IsNullOrEmpty(skillId))
             {
-                LeftHandSwardLog.Warn("MeleeObservation", "Begin skipped skill=" + (skillId ?? "null"));
+                LeftHandSwardLog.Warn(
+                    "MeleeObservation",
+                    "Begin skipped skill=" + (skillId ?? "null"));
                 return;
             }
 
             _pendingAttackAgent = agent;
             _pendingAttackSkillId = skillId;
             _pendingAttackUntil = agent.Mission.CurrentTime + Math.Max(0.25f, seconds);
+            _lastObservedAttackState = null;
+
             LeftHandSwardLog.Info(
                 "MeleeObservation",
                 "Begin skill=" + skillId
@@ -275,7 +413,8 @@ namespace LeftHandSward.Skills
                 + " dir=" + collisionData.AttackDirection
                 + " progress=" + collisionData.AttackProgress
                 + " attacker=" + SafeAgentName(attacker)
-                + " victim=" + SafeAgentName(victim));
+                + " victim=" + SafeAgentName(victim)
+                + " hands={" + DescribeHands(attacker) + "}");
 
             Report(
                 _pendingAttackSkillId
@@ -283,18 +422,17 @@ namespace LeftHandSward.Skills
                 + " canceled=" + isCanceled
                 + " dir=" + collisionData.AttackDirection
                 + " progress=" + collisionData.AttackProgress
-                + " victim=" + (victim == null ? "null" : victim.Name.ToString()));
+                + " victim=" + SafeAgentName(victim));
 
-            _pendingAttackAgent = null;
-            _pendingAttackSkillId = null;
-            _pendingAttackUntil = 0f;
+            ClearMeleeObservation();
         }
 
         public static void Report(string message)
         {
             LeftHandSwardLog.Info("Report", message);
             Debug.Print("[LeftHandSward] " + message);
-            InformationManager.DisplayMessage(new InformationMessage("[左手攻击扩展] " + message));
+            InformationManager.DisplayMessage(
+                new InformationMessage("[左手攻击扩展] " + message));
         }
 
         public static void TraceSkillActivation(string skillId, Agent agent)
@@ -303,12 +441,22 @@ namespace LeftHandSward.Skills
                 "SkillActivate",
                 "skill=" + (skillId ?? "null")
                 + " agent=" + SafeAgentName(agent)
-                + " state={" + DescribeAgentAction(agent) + "}");
+                + " state={" + DescribeAgentAction(agent) + "}"
+                + " hands={" + DescribeHands(agent) + "}");
+        }
+
+        private static void ClearMeleeObservation()
+        {
+            _pendingAttackAgent = null;
+            _pendingAttackSkillId = null;
+            _pendingAttackUntil = 0f;
+            _lastObservedAttackState = null;
         }
 
         private static void RemoveVisualCloneAt(int index)
         {
             VisualCloneState state = _visualClones[index];
+
             try
             {
                 if (state.Skeleton != null && state.MetaMesh != null && state.MetaMesh.IsValid)
@@ -325,11 +473,28 @@ namespace LeftHandSward.Skills
             catch (Exception ex)
             {
                 LeftHandSwardLog.Exception("VisualClone", ex);
-                Debug.Print("[LeftHandSward] RemoveVisualClone failed: " + ex.Message);
             }
 
             _visualClones.RemoveAt(index);
             LeftHandSwardLog.Info("VisualClone", "Removed clone index=" + index);
+        }
+
+        private static string DescribeAttackObservationState(Agent agent)
+        {
+            if (agent == null)
+                return "agent=null";
+
+            try
+            {
+                return DescribeAgentAction(agent)
+                       + " animFlags=" + agent.GetCurrentAnimationFlag(1)
+                       + " movementFlags=" + agent.MovementFlags
+                       + " hands={" + DescribeHands(agent) + "}";
+            }
+            catch (Exception ex)
+            {
+                return "observe-failed=" + ex.GetType().Name + ":" + ex.Message;
+            }
         }
 
         private static string DescribeAgentAction(Agent agent)
@@ -343,6 +508,7 @@ namespace LeftHandSward.Skills
                        + " agentState=" + agent.State
                        + " actionType=" + agent.GetCurrentActionType(1)
                        + " actionStage=" + agent.GetCurrentActionStage(1)
+                       + " actionDirection=" + agent.GetCurrentActionDirection(1)
                        + " actionProgress=" + agent.GetCurrentActionProgress(1)
                        + " attackDir=" + agent.AttackDirection;
             }
@@ -350,6 +516,43 @@ namespace LeftHandSward.Skills
             {
                 return "describe-failed=" + ex.GetType().Name + ":" + ex.Message;
             }
+        }
+
+        private static string DescribeHands(Agent agent)
+        {
+            if (agent == null)
+                return "agent=null";
+
+            try
+            {
+                EquipmentIndex primaryIndex = agent.GetPrimaryWieldedItemIndex();
+                EquipmentIndex offhandIndex = agent.GetOffhandWieldedItemIndex();
+                WeaponInfo mainInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.MainHand);
+                WeaponInfo offInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
+
+                return "primarySlot=" + primaryIndex
+                       + " offhandSlot=" + offhandIndex
+                       + " mainInfo=[valid=" + mainInfo.IsValid
+                       + ",melee=" + mainInfo.IsMeleeWeapon
+                       + ",ranged=" + mainInfo.IsRangedWeapon + "]"
+                       + " offInfo=[valid=" + offInfo.IsValid
+                       + ",melee=" + offInfo.IsMeleeWeapon
+                       + ",ranged=" + offInfo.IsRangedWeapon + "]"
+                       + " mainWeapon=" + DescribeMissionWeapon(agent.WieldedWeapon)
+                       + " offWeapon=" + DescribeMissionWeapon(agent.WieldedOffhandWeapon);
+            }
+            catch (Exception ex)
+            {
+                return "hands-failed=" + ex.GetType().Name + ":" + ex.Message;
+            }
+        }
+
+        private static string DescribeMissionWeapon(MissionWeapon weapon)
+        {
+            if (weapon.IsEmpty || weapon.Item == null || weapon.CurrentUsageItem == null)
+                return "<empty>";
+
+            return weapon.Item.StringId + "/" + weapon.CurrentUsageItem.WeaponClass;
         }
 
         private static string SafeAgentName(Agent agent)
@@ -372,8 +575,13 @@ namespace LeftHandSward.Skills
             sbyte count = skeleton.GetBoneCount();
             for (sbyte i = 0; i < count; i++)
             {
-                if (string.Equals(skeleton.GetBoneName(i), boneName, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(
+                    skeleton.GetBoneName(i),
+                    boneName,
+                    StringComparison.OrdinalIgnoreCase))
+                {
                     return i;
+                }
             }
 
             return -1;
