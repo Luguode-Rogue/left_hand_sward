@@ -12,13 +12,19 @@ internal static class Program
 
     private static readonly string[] PreferredLeftArmSourceActions =
     {
-        // Centre-grip shield bash is the best donor for a sword in the left hand:
-        // the shield itself is an OffHand item and the motion is authored on the
-        // anatomical left arm/hand.
         "act_hand_shield_bash",
-
-        // Standard strapped-shield bash is still an explicit OffHand left-arm motion.
         "act_shield_bash"
+    };
+
+    private static readonly string[] PreferredCombatTemplateActions =
+    {
+        // Runtime logs show the native state machine normally reaches a quick
+        // one-handed right slash before we replace ReleaseMelee. Keep that clip's
+        // combat timing/parameters and swap only the referenced skeletal motion.
+        "act_quick_release_slashright_1h",
+        "act_quick_release_slashright_1h_left_stance",
+        "act_release_slashright_1h",
+        "act_release_slashright_1h_left_stance"
     };
 
     private const string OutputClip =
@@ -80,7 +86,7 @@ internal static class Program
             WriteNativeCandidateReport(actionSets, actionTypes, candidateReport);
 
             (string sourceAction, string sourceClip) =
-                ResolvePreferredLeftArmAnimation(actionSets);
+                ResolvePreferredAction(actionSets, PreferredLeftArmSourceActions, "left-arm motion donor");
 
             ClipRecord source = FindClip(game, sourceClip)
                 ?? throw new InvalidOperationException(
@@ -88,35 +94,52 @@ internal static class Program
                     + sourceClip
                     + " (action=" + sourceAction + ")");
 
+            (string templateAction, string templateClip) =
+                ResolvePreferredAction(actionSets, PreferredCombatTemplateActions, "one-handed ReleaseMelee combat template");
+
+            ClipRecord template = FindClip(game, templateClip)
+                ?? throw new InvalidOperationException(
+                    "AnimationClip not found in Native TPACs: "
+                    + templateClip
+                    + " (action=" + templateAction + ")");
+
+            Guid donorAnimation = ReadAnimationGuid(source.Metadata);
+            byte[] hybridMetadata =
+                ReplaceAnimationGuid(template.Metadata, donorAnimation);
+            byte[] patchedMetadata =
+                AddFlag(hybridMetadata, LeftColliderFlag);
+
             string donorReport = Path.Combine(
                 outputDirectory,
                 "left_hand_motion_donor.txt");
             File.WriteAllText(
                 donorReport,
-                "sourceAction=" + sourceAction + Environment.NewLine
-                + "sourceClip=" + sourceClip + Environment.NewLine
-                + "sourcePackage=" + source.SourcePackage + Environment.NewLine
+                "motionSourceAction=" + sourceAction + Environment.NewLine
+                + "motionSourceClip=" + sourceClip + Environment.NewLine
+                + "motionSourcePackage=" + source.SourcePackage + Environment.NewLine
+                + "motionAnimationGuid=" + donorAnimation + Environment.NewLine
+                + "combatTemplateAction=" + templateAction + Environment.NewLine
+                + "combatTemplateClip=" + templateClip + Environment.NewLine
+                + "combatTemplatePackage=" + template.SourcePackage + Environment.NewLine
                 + "outputClip=" + OutputClip + Environment.NewLine
                 + "colliderFlag=" + LeftColliderFlag + Environment.NewLine,
                 Encoding.UTF8);
 
-            byte[] patchedMetadata =
-                AddFlag(source.Metadata, LeftColliderFlag);
-
             WriteSingleClipPackage(
                 output,
-                source.PackageVersion,
-                source.AssetVersion,
+                template.PackageVersion,
+                template.AssetVersion,
                 patchedMetadata,
                 source.Dependencies,
                 source.DependencyCount,
-                source.Segments);
+                template.Segments);
 
             Console.WriteLine(
-                "[LeftHandClipBuilder] sourceAction=" + sourceAction
-                + " sourceClip=" + sourceClip
-                + " sourcePackage=" + source.SourcePackage
-                + " sourceSegments=" + source.Segments.Count
+                "[LeftHandClipBuilder] HYBRID"
+                + " motionAction=" + sourceAction
+                + " motionClip=" + sourceClip
+                + " templateAction=" + templateAction
+                + " templateClip=" + templateClip
                 + " outputClip=" + OutputClip
                 + " output=" + output);
             return 0;
@@ -234,7 +257,10 @@ internal static class Program
     }
 
     private static (string Action, string Animation)
-        ResolvePreferredLeftArmAnimation(string actionSetsPath)
+        ResolvePreferredAction(
+            string actionSetsPath,
+            IReadOnlyList<string> preferredActions,
+            string purpose)
     {
         XDocument doc = XDocument.Load(actionSetsPath);
         XElement? warrior = doc
@@ -251,7 +277,7 @@ internal static class Program
                 "Native action set not found: as_human_warrior");
         }
 
-        foreach (string actionName in PreferredLeftArmSourceActions)
+        foreach (string actionName in preferredActions)
         {
             XElement? action = warrior
                 .Elements("action")
@@ -267,7 +293,7 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(animation))
             {
                 Console.WriteLine(
-                    "[LeftHandClipBuilder] selected left-arm donor"
+                    "[LeftHandClipBuilder] selected " + purpose
                     + " action=" + actionName
                     + " animation=" + animation);
 
@@ -276,10 +302,9 @@ internal static class Program
         }
 
         throw new InvalidOperationException(
-            "No explicit OffHand shield-bash animation was found in "
-            + "Native/as_human_warrior. Expected one of: "
-            + string.Join(", ", PreferredLeftArmSourceActions)
-            + ". Refusing to fall back to a right-hand animation.");
+            "No Native action mapping found for " + purpose
+            + " in as_human_warrior. Expected one of: "
+            + string.Join(", ", preferredActions));
     }
 
     private static ClipRecord? FindClip(
@@ -475,6 +500,35 @@ internal static class Program
             br.BaseStream.Seek(returnPosition, SeekOrigin.Begin);
         }
 
+        return result;
+    }
+
+    private static Guid ReadAnimationGuid(byte[] metadata)
+    {
+        const int AnimationGuidOffset =
+            sizeof(uint) + 6 * sizeof(float) + sizeof(int);
+
+        if (metadata.Length < AnimationGuidOffset + 16)
+            throw new InvalidDataException("AnimationClip metadata is too short for animation guid");
+
+        byte[] bytes = new byte[16];
+        Buffer.BlockCopy(metadata, AnimationGuidOffset, bytes, 0, 16);
+        return new Guid(bytes);
+    }
+
+    private static byte[] ReplaceAnimationGuid(
+        byte[] metadata,
+        Guid animationGuid)
+    {
+        const int AnimationGuidOffset =
+            sizeof(uint) + 6 * sizeof(float) + sizeof(int);
+
+        if (metadata.Length < AnimationGuidOffset + 16)
+            throw new InvalidDataException("AnimationClip metadata is too short for animation guid");
+
+        byte[] result = (byte[])metadata.Clone();
+        byte[] guid = animationGuid.ToByteArray();
+        Buffer.BlockCopy(guid, 0, result, AnimationGuidOffset, 16);
         return result;
     }
 
