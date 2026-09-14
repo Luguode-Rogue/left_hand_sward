@@ -589,8 +589,20 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            // Never leave an older probe active across a new test.
-            RestoreOffHandProbe();
+            if (_leftHandRewriteAgent != null ||
+                _deferredOffHandRestorePending)
+            {
+                result = "上一轮左手攻击仍在执行/恢复中，请等待动作结束";
+                LeftHandSwardLog.Warn(
+                    "LeftHandNative",
+                    result + " hands={" + DescribeHands(agent) + "}");
+                return false;
+            }
+
+            // A stale probe can only remain here if no rewrite/restore is active.
+            // Never clear it while a ReleaseMelee callback chain is in progress.
+            if (_offHandProbeAgent != null)
+                RestoreOffHandProbe();
 
             EquipmentIndex existingOffHand = agent.GetOffhandWieldedItemIndex();
             EquipmentIndex offHandSlot = EquipmentIndex.None;
