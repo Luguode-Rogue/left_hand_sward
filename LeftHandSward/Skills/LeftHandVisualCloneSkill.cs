@@ -11,11 +11,11 @@ namespace LeftHandSward.Skills
         public LeftHandVisualCloneSkill()
         {
             SkillID = Id;
-            Type = SPSkillType.MainActive;
+            Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
             Text = new TextObject("左手测试-视觉复制");
-            Description = new TextObject("按主主动技能键 E，把当前右手武器 MetaMesh 复制到 l_hand 骨骼；只测试双持视觉，不触发原版左键攻击。");
+            Description = new TextObject("按副主动技能键 LeftAlt，把当前右手武器 MetaMesh 复制到 l_hand 骨骼；只测试双持视觉，不触发原版左键攻击。");
         }
 
         public override bool Activate(Agent casterAgent)
