@@ -154,14 +154,27 @@ namespace LeftHandSward.Skills
 
             RemoveVisualClone(agent);
 
+            LeftHandSwardLog.Info("VisualClone", "CALL MetaMesh.GetCopy BEGIN mesh=" + meshName);
             MetaMesh clone = MetaMesh.GetCopy(meshName, false, true);
+            LeftHandSwardLog.Info(
+                "VisualClone",
+                "CALL MetaMesh.GetCopy RETURN clone=" + (clone == null ? "null" : "non-null")
+                + " valid=" + (clone != null && clone.IsValid));
+
             if (clone == null || !clone.IsValid)
             {
                 result = "无法复制武器 MetaMesh: " + meshName;
                 return false;
             }
 
+            LeftHandSwardLog.Info(
+                "VisualClone",
+                "CALL Skeleton.AddComponentToBone BEGIN bone=" + leftHandBone + " mesh=" + meshName);
             skeleton.AddComponentToBone(leftHandBone, clone);
+            LeftHandSwardLog.Info(
+                "VisualClone",
+                "CALL Skeleton.AddComponentToBone RETURN bone=" + leftHandBone + " mesh=" + meshName);
+
             _visualClones.Add(new VisualCloneState
             {
                 Agent = agent,
@@ -299,7 +312,15 @@ namespace LeftHandSward.Skills
             try
             {
                 if (state.Skeleton != null && state.MetaMesh != null && state.MetaMesh.IsValid)
+                {
+                    LeftHandSwardLog.Info(
+                        "VisualClone",
+                        "CALL Skeleton.RemoveBoneComponent BEGIN bone=" + state.BoneIndex);
                     state.Skeleton.RemoveBoneComponent(state.BoneIndex, state.MetaMesh);
+                    LeftHandSwardLog.Info(
+                        "VisualClone",
+                        "CALL Skeleton.RemoveBoneComponent RETURN bone=" + state.BoneIndex);
+                }
             }
             catch (Exception ex)
             {
