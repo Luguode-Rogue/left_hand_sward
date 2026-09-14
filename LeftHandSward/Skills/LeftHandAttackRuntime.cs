@@ -31,8 +31,6 @@ namespace LeftHandSward.Skills
             public Agent Agent;
             public MissionWeapon Weapon;
             public EquipmentIndex SourceSlot;
-            public MissionWeapon DamageWeapon;
-            public EquipmentIndex DamageSourceSlot;
             public string SkillId;
             public Skeleton Skeleton;
             public sbyte LeftHandBone;
@@ -44,10 +42,6 @@ namespace LeftHandSward.Skills
             public float StartedAt;
             public float AttackEndAt;
             public bool IkResultLogged;
-            public bool HasPreviousBlade;
-            public Vec3 PreviousBladeBase;
-            public Vec3 PreviousBladeTip;
-            public bool HitRegistered;
         }
 
         private static readonly List<VisualCloneState> _visualClones = new List<VisualCloneState>();
@@ -700,18 +694,18 @@ namespace LeftHandSward.Skills
                 return false;
             }
 
-            MissionWeapon damageWeapon = agent.Equipment[primarySlot];
-            if (damageWeapon.IsEmpty ||
-                damageWeapon.Item == null ||
-                damageWeapon.CurrentUsageItem == null ||
-                !damageWeapon.CurrentUsageItem.IsMeleeWeapon)
+            MissionWeapon nativeWeapon = agent.Equipment[primarySlot];
+            if (nativeWeapon.IsEmpty ||
+                nativeWeapon.Item == null ||
+                nativeWeapon.CurrentUsageItem == null ||
+                !nativeWeapon.CurrentUsageItem.IsMeleeWeapon)
             {
                 result = "当前右手不是有效近战武器";
                 return false;
             }
 
-            // Left hand still uses a distinct weapon for visuals/reach, but all
-            // damage calculation comes from the captured RIGHT-HAND weapon.
+            // Experiment 4 reuses experiment 1's native melee pipeline unchanged.
+            // The secondary weapon below is presentation-only.
             EquipmentIndex leftSlot = FindDistinctCurrentOneHandMeleeSlot(
                 agent,
                 primarySlot);
@@ -781,8 +775,6 @@ namespace LeftHandSward.Skills
                 Agent = agent,
                 Weapon = leftWeapon,
                 SourceSlot = leftSlot,
-                DamageWeapon = damageWeapon,
-                DamageSourceSlot = primarySlot,
                 SkillId = skillId,
                 Skeleton = skeleton,
                 LeftHandBone = leftHandBone,
@@ -793,11 +785,7 @@ namespace LeftHandSward.Skills
                 RestRightHandWorld = restRight,
                 StartedAt = now,
                 AttackEndAt = now + 0.62f,
-                IkResultLogged = false,
-                HasPreviousBlade = false,
-                PreviousBladeBase = Vec3.Zero,
-                PreviousBladeTip = Vec3.Zero,
-                HitRegistered = false
+                IkResultLogged = false
             };
 
             LeftHandSwardLog.Info(
@@ -806,14 +794,30 @@ namespace LeftHandSward.Skills
                 + " skill=" + skillId
                 + " leftSlot=" + leftSlot
                 + " visualWeapon=" + DescribeMissionWeapon(leftWeapon)
-                + " damageSlot=" + primarySlot
-                + " damageWeapon=" + DescribeMissionWeapon(damageWeapon)
+                + " nativeSlot=" + primarySlot
+                + " nativeWeapon=" + DescribeMissionWeapon(nativeWeapon)
                 + " visual={" + visualResult + "}"
                 + " leftHandBone=" + leftHandBone
                 + " leftItemBone=" + leftItemBone
                 + " shoulderBone=" + leftShoulderBone);
 
-            result = "已启动程序 IK 左手挥砍";
+            if (!QueueNativeAttack(
+                    agent,
+                    skillId,
+                    Agent.MovementControlFlag.AttackRight,
+                    out string nativeResult))
+            {
+                EndCustomLeftHandAttack("native queue failed");
+                result = nativeResult;
+                return false;
+            }
+
+            LeftHandSwardLog.Info(
+                "LeftHandIK",
+                "NATIVE PIPELINE QUEUED via experiment-1"
+                + " result={" + nativeResult + "}");
+
+            result = "左手IK已启动；命中完全复用实验1原生 melee pipeline";
             return true;
         }
 
@@ -1527,354 +1531,9 @@ namespace LeftHandSward.Skills
                 return;
             }
 
-            if (!activeStrike || state.HitRegistered)
-                return;
-
-            WeaponComponentData usage = state.Weapon.CurrentUsageItem;
-            if (usage == null)
-            {
-                EndCustomLeftHandAttack("weapon usage became null");
-                return;
-            }
-
-            // Collision follows the procedural LEFT HAND target. It no longer uses
-            // the right-hand weapon, right-hand action, or a character-centered arc.
-            Vec3 bladeBase = leftTarget.origin;
-            Vec3 armOut = bladeBase - shoulderWorld.origin;
-            if (armOut.LengthSquared < 0.0001f)
-                armOut = forward;
-            armOut.Normalize();
-
-            float weaponLength = TaleWorlds.Library.MathF.Clamp(
-                usage.WeaponLength * 0.01f,
-                0.45f,
-                1.80f);
-            Vec3 bladeTip = bladeBase + armOut * weaponLength;
-
-            Agent victim = null;
-            sbyte boneIndex = 0;
-            Vec3 hitPoint = bladeTip;
-
-            if (TryRayCastLeftHandVictim(
-                    mission,
-                    agent,
-                    bladeBase,
-                    bladeTip,
-                    out Agent bladeVictim,
-                    out sbyte bladeBone,
-                    out Vec3 bladeHit))
-            {
-                victim = bladeVictim;
-                boneIndex = bladeBone;
-                hitPoint = bladeHit;
-            }
-            else if (state.HasPreviousBlade &&
-                     TryRayCastLeftHandVictim(
-                         mission,
-                         agent,
-                         state.PreviousBladeTip,
-                         bladeTip,
-                         out Agent sweptVictim,
-                         out sbyte sweptBone,
-                         out Vec3 sweptHit))
-            {
-                victim = sweptVictim;
-                boneIndex = sweptBone;
-                hitPoint = sweptHit;
-            }
-
-            if (victim != null)
-            {
-                Vec3 sweepDirection = bladeTip - state.PreviousBladeTip;
-                if (!state.HasPreviousBlade ||
-                    sweepDirection.LengthSquared < 0.0001f)
-                {
-                    sweepDirection = right;
-                }
-                sweepDirection.Normalize();
-
-                float collisionDistanceOnVisualWeapon =
-                    (hitPoint - bladeBase).Length;
-                float strikeProgress =
-                    TaleWorlds.Library.MathF.Clamp(
-                        (progress - 0.22f) / 0.50f,
-                        0f,
-                        1f);
-
-                state.HitRegistered = RegisterCustomLeftHandBlow(
-                    state,
-                    victim,
-                    boneIndex,
-                    hitPoint,
-                    sweepDirection,
-                    strikeProgress,
-                    collisionDistanceOnVisualWeapon);
-            }
-
-            state.PreviousBladeBase = bladeBase;
-            state.PreviousBladeTip = bladeTip;
-            state.HasPreviousBlade = true;
-        }
-
-        private static float SmoothStep01(float value)
-        {
-            float t = TaleWorlds.Library.MathF.Clamp(value, 0f, 1f);
-            return t * t * (3f - 2f * t);
-        }
-
-        private static void EndCustomLeftHandAttack(string reason)
-        {
-            CustomLeftHandAttackState state = _customLeftHandAttack;
-            if (state == null)
-                return;
-
-            if (state.Agent != null)
-                state.Agent.ClearHandInverseKinematics();
-
-            LeftHandSwardLog.Info(
-                "LeftHandIK",
-                "END reason=" + reason
-                + " hit=" + state.HitRegistered);
-
-            _customLeftHandAttack = null;
-        }
-
-        private static bool TryRayCastLeftHandVictim(
-            Mission mission,
-            Agent attacker,
-            Vec3 source,
-            Vec3 target,
-            out Agent victim,
-            out sbyte boneIndex,
-            out Vec3 hitPoint)
-        {
-            victim = null;
-            boneIndex = 0;
-            hitPoint = target;
-
-            float collisionDistance;
-            sbyte collisionBone;
-            Agent candidate = mission.RayCastForClosestAgentsLimbs(
-                source,
-                target,
-                attacker.Index,
-                0.22f,
-                out collisionDistance,
-                out collisionBone);
-
-            if (candidate == null ||
-                candidate.State != AgentState.Active ||
-                candidate == attacker ||
-                attacker.IsFriendOf(candidate))
-            {
-                return false;
-            }
-
-            Vec3 delta = target - source;
-            float length = delta.Length;
-            if (length > 0.0001f)
-            {
-                float t = TaleWorlds.Library.MathF.Clamp(collisionDistance / length, 0f, 1f);
-                hitPoint = source + delta * t;
-            }
-
-            victim = candidate;
-            boneIndex = collisionBone;
-            return true;
-        }
-
-        private static bool RegisterCustomLeftHandBlow(
-            CustomLeftHandAttackState state,
-            Agent victim,
-            sbyte boneIndex,
-            Vec3 hitPoint,
-            Vec3 sweepDirection,
-            float attackProgress,
-            float collisionDistanceOnVisualWeapon)
-        {
-            Agent attacker = state.Agent;
-            MissionWeapon visualWeapon = state.Weapon;
-            MissionWeapon damageWeapon = state.DamageWeapon;
-            WeaponComponentData damageUsage = damageWeapon.CurrentUsageItem;
-
-            if (attacker == null ||
-                victim == null ||
-                victim.State != AgentState.Active ||
-                visualWeapon.IsEmpty ||
-                damageWeapon.IsEmpty ||
-                damageWeapon.Item == null ||
-                damageUsage == null ||
-                !damageUsage.IsMeleeWeapon)
-            {
-                return false;
-            }
-
-            if (MissionGameModels.Current == null)
-            {
-                LeftHandSwardLog.Warn(
-                    "LeftHandDamage",
-                    "MissionGameModels.Current is null; hit canceled");
-                return false;
-            }
-
-            Vec3 blowDirection = victim.Position - attacker.Position;
-            blowDirection.z = 0f;
-            if (blowDirection.LengthSquared < 0.0001f)
-                blowDirection = sweepDirection;
-            blowDirection.Normalize();
-
-            BoneBodyPartType bodyPart = BoneBodyPartType.Chest;
-            if (victim.AgentVisuals != null && boneIndex >= 0)
-            {
-                bodyPart = victim.AgentVisuals.GetBoneTypeData(boneIndex).BodyPartType;
-                if (bodyPart == BoneBodyPartType.None)
-                    bodyPart = BoneBodyPartType.Chest;
-            }
-
-            sbyte damageAttachBone = -1;
-            if (attacker.Monster != null)
-            {
-                damageAttachBone = attacker.Monster.GetBoneToAttachForItemFlags(
-                    damageWeapon.Item.ItemFlags);
-            }
-
-            // Collision geometry comes from the left-hand visual weapon, but the
-            // native damage model must see the captured RIGHT-HAND weapon.
-            float damageWeaponLength =
-                TaleWorlds.Library.MathF.Max(
-                    0.01f,
-                    damageUsage.GetRealWeaponLength());
-            float collisionDistanceOnDamageWeapon =
-                TaleWorlds.Library.MathF.Clamp(
-                    collisionDistanceOnVisualWeapon,
-                    0.05f,
-                    damageWeaponLength);
-
-            AttackCollisionData collisionData =
-                AttackCollisionData.GetAttackCollisionDataForDebugPurpose(
-                    false,
-                    false,
-                    false,
-                    true,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    CombatCollisionResult.StrikeAgent,
-                    (int)state.DamageSourceSlot,
-                    (int)StrikeType.Swing,
-                    (int)damageUsage.SwingDamageType,
-                    boneIndex,
-                    bodyPart,
-                    damageAttachBone,
-                    Agent.UsageDirection.AttackLeft,
-                    -1,
-                    CombatHitResultFlags.NormalHit,
-                    attackProgress,
-                    collisionDistanceOnDamageWeapon,
-                    0f,
-                    0f,
-                    0f,
-                    0f,
-                    0f,
-                    0f,
-                    Vec3.Up,
-                    sweepDirection,
-                    hitPoint,
-                    Vec3.Zero,
-                    Vec3.Zero,
-                    victim.Velocity,
-                    Vec3.Up);
-
-            AttackInformation attackInformation = new AttackInformation(
-                attacker,
-                victim,
-                WeakGameEntity.Invalid,
-                collisionData,
-                damageWeapon);
-
-            // The engine does not know our visual left-hand attachment is an offhand
-            // weapon. Populate it explicitly so one-handed perks such as Duelist do
-            // not incorrectly treat this as an empty offhand.
-            attackInformation.OffHandItem = visualWeapon;
-
-            LeftHandSwardLog.Info(
-                "LeftHandDamage",
-                "CALC BEGIN"
-                + " victim=" + SafeAgentName(victim)
-                + " bodyPart=" + bodyPart
-                + " visualWeapon=" + DescribeMissionWeapon(visualWeapon)
-                + " damageWeapon=" + DescribeMissionWeapon(damageWeapon)
-                + " attackProgress=" + attackProgress
-                + " collisionDistance=" + collisionDistanceOnDamageWeapon);
-
-            MissionCombatMechanicsHelper.GetAttackCollisionResults(
-                attackInformation,
-                false,
-                1f,
-                false,
-                ref collisionData,
-                out CombatLogData combatLog,
-                out int speedBonus);
-
-            int damage = collisionData.InflictedDamage;
-
-            Blow blow = new Blow(attacker.Index);
-            blow.DamageType = damageUsage.SwingDamageType;
-            blow.StrikeType = StrikeType.Swing;
-            blow.AttackType = AgentAttackType.Standard;
-            blow.BoneIndex = boneIndex;
-            blow.VictimBodyPart = bodyPart;
-            blow.BaseMagnitude = collisionData.BaseMagnitude;
-            blow.GlobalPosition = hitPoint;
-            blow.DamagedPercentage = 1f;
-            blow.SwingDirection = sweepDirection;
-            blow.Direction = blowDirection;
-            blow.InflictedDamage = collisionData.InflictedDamage;
-            blow.AbsorbedByArmor = collisionData.AbsorbedByArmor;
-            blow.MovementSpeedDamageModifier =
-                collisionData.MovementSpeedDamageModifier;
-            blow.AttackerStunPeriod = collisionData.AttackerStunPeriod;
-            blow.DefenderStunPeriod = collisionData.DefenderStunPeriod;
-            blow.DamageCalculated = true;
-
-            blow.WeaponRecord.FillAsMeleeBlow(
-                damageWeapon.Item,
-                damageUsage,
-                (int)state.DamageSourceSlot,
-                damageAttachBone);
-
-            float healthBefore = victim.Health;
-
-            LeftHandSwardLog.Info(
-                "LeftHandDamage",
-                "CALC RETURN"
-                + " damage=" + damage
-                + " baseMagnitude=" + collisionData.BaseMagnitude
-                + " absorbed=" + collisionData.AbsorbedByArmor
-                + " speedBonus=" + speedBonus
-                + " healthBefore=" + healthBefore);
-
-            victim.RegisterBlow(blow, collisionData);
-
-            LeftHandSwardLog.Info(
-                "LeftHandDamage",
-                "REGISTER RETURN"
-                + " victim=" + SafeAgentName(victim)
-                + " healthAfter=" + victim.Health);
-
-            Report(
-                state.SkillId
-                + " 左手命中 "
-                + SafeAgentName(victim)
-                + " damage=" + damage
-                + "（右手武器伤害模型）");
-
-            return true;
+            // No custom collision or damage here.
+            // Experiment 1's queued native attack owns hit detection, blocking,
+            // collision response, damage calculation and Blow creation.
         }
 
         private static int GetMainHandUsageIndex(Agent agent)

@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("实验4-程序IK左手挥砍");
-            Description = new TextObject("要求另一个装备槽有单手近战武器。左手第二把武器只负责视觉、IK和碰撞范围；最终伤害始终使用激活瞬间右手武器，并交给Bannerlord原版StrikeMagnitude/AgentApplyDamage模型计算。");
+            Text = new TextObject("实验4-左手IK+实验1原生命中");
+            Description = new TextObject("左手只负责第二把武器显示和IK动作；命中、格挡、伤害、Blow全部直接复用实验1的MovementFlags原生melee pipeline。本技能不创建RayCast、AttackCollisionData或Blow。");
         }
 
         public override bool Activate(Agent casterAgent)
