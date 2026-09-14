@@ -19,7 +19,7 @@ The extension:
 
 ## Registered skills
 
-All current experiments are `SPSkillType.MainActive`, so they use New_ZZZF's existing main-active input path (E by default) and do not overlap the original left-mouse melee attack.
+All current experiments are `SPSkillType.SubActive`, so they use New_ZZZF's existing sub-active input path (LeftAlt by default) and do not overlap the original left-mouse melee attack.
 
 - `LHTest_NativeRightBaseline`
 - `LHTest_VisualClone`
@@ -51,8 +51,8 @@ New_ZZZF.OnNewGameCreated / OnGameLoaded is about to run
           (includes LeftHandSward skills)
        -> troop skill XML parsing sees the external skill IDs
 
-Player equips an LHTest_* MainActive skill
-    -> New_ZZZF AgentSkillComponent handles E / cooldown / stamina
+Player equips an LHTest_* SubActive skill
+    -> New_ZZZF AgentSkillComponent handles LeftAlt / cooldown / stamina
     -> external SkillBase.Activate() runs
 
 LeftHandSward MissionBehavior
