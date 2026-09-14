@@ -1,0 +1,11 @@
+# Visual Studio / VS Code local state
+.vs/
+**/.vs/
+
+# Build output
+**/bin/
+**/obj/
+
+# User/local files
+*.user
+*.suo
