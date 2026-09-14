@@ -14,20 +14,19 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("左手测试-副手状态+原生攻击");
-            Description = new TextObject("按 LeftAlt：先让原生系统尝试切换副手，再从 IPlayerInputEffector 注入原生攻击；观察副手状态是否影响 native melee。");
+            Text = new TextObject("左手测试-真实副手+原生攻击");
+            Description = new TextObject("按 LeftAlt：先建立 HeldInOffHand 的真实临时副手剑，再通过 IPlayerInputEffector + MovementFlags 发起原生攻击。");
         }
 
         public override bool Activate(Agent casterAgent)
         {
             LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
 
-            if (!LeftHandAttackRuntime.ProbeOffhand(
+            if (!LeftHandAttackRuntime.EquipTemporaryOffhandClone(
                     casterAgent,
-                    true,
-                    out string probeResult))
+                    out string offhandResult))
             {
-                LeftHandAttackRuntime.Report(Id + " 副手探针失败: " + probeResult);
+                LeftHandAttackRuntime.Report(Id + " 副手装备失败: " + offhandResult);
                 return false;
             }
 
@@ -38,7 +37,7 @@ namespace LeftHandSward.Skills
                 out string attackResult);
 
             LeftHandAttackRuntime.Report(
-                Id + " offhand={" + probeResult + "} nativeAttack={" + attackResult + "}");
+                Id + " offhand={" + offhandResult + "} nativeAttack={" + attackResult + "}");
             return attackOk;
         }
     }
