@@ -1,4 +1,5 @@
 using LeftHandSward.Skills;
+using TaleWorlds.Core;
 using TaleWorlds.MountAndBlade;
 
 namespace LeftHandSward
