@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("实验6-OffHand原生攻击探针");
-            Description = new TextObject("仅在真实 OffHand 已经有效时注入原生 AttackRight，观察 Bannerlord 最终选择哪只手、哪把武器和哪条 melee sweep。不会自行创建 OffHand。");
+            Text = new TextObject("实验5-OffHand状态+原生攻击");
+            Description = new TextObject("同一次激活先自动建立已验证的 native OffHand，再通过 MovementFlags 注入原生 AttackRight；观察动作和 OnMeleeHit 最终使用主手还是副手。");
         }
 
         public override bool Activate(Agent casterAgent)

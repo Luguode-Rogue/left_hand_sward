@@ -562,11 +562,28 @@ namespace LeftHandSward.Skills
                 offWeapon.IsEmpty ||
                 offWeapon.CurrentUsageItem == null)
             {
-                result = "OffHand 尚未建立；先单独验证 LHTest_OffHandStateProbe";
-                LeftHandSwardLog.Warn(
+                LeftHandSwardLog.Info(
                     "OffHandAttack",
-                    result + " hands={" + DescribeHands(agent) + "}");
-                return false;
+                    "No valid OffHand before attack; auto-establishing one in the same skill activation");
+
+                if (!EstablishOffHandStateFromExistingWeapon(agent, out string establishResult))
+                {
+                    result = "自动建立 OffHand 失败: " + establishResult;
+                    LeftHandSwardLog.Warn(
+                        "OffHandAttack",
+                        result + " hands={" + DescribeHands(agent) + "}");
+                    return false;
+                }
+
+                offHandIndex = agent.GetOffhandWieldedItemIndex();
+                offInfo = agent.GetWieldedWeaponInfo(Agent.HandIndex.OffHand);
+                offWeapon = agent.WieldedOffhandWeapon;
+
+                LeftHandSwardLog.Info(
+                    "OffHandAttack",
+                    "AUTO-ESTABLISH RETURN"
+                    + " result={" + establishResult + "}"
+                    + " hands={" + DescribeHands(agent) + "}");
             }
 
             if (!offWeapon.CurrentUsageItem.IsMeleeWeapon)
@@ -779,6 +796,30 @@ namespace LeftHandSward.Skills
             if (agent == null || agent.Equipment == null)
                 return EquipmentIndex.None;
 
+            // First prefer an item that actually has a melee usage which is allowed
+            // in one hand. The previous real-game probe proved that native can put
+            // a TwoHandedMace in OffHand, but that is a poor left-hand attack test.
+            for (EquipmentIndex slot = EquipmentIndex.WeaponItemBeginSlot;
+                 slot < EquipmentIndex.ExtraWeaponSlot;
+                 slot++)
+            {
+                if (slot == primaryIndex)
+                    continue;
+
+                MissionWeapon weapon = agent.Equipment[slot];
+                if (HasOneHandCapableMeleeUsage(weapon))
+                {
+                    LeftHandSwardLog.Info(
+                        "OffHandProbe",
+                        "Selected preferred one-hand-capable candidate"
+                        + " slot=" + slot
+                        + " weapon=" + DescribeMissionWeapon(weapon));
+                    return slot;
+                }
+            }
+
+            // Fallback: keep the already-proven broad melee behavior so we can still
+            // probe native OffHand state when the loadout has no one-hand-capable spare.
             for (EquipmentIndex slot = EquipmentIndex.WeaponItemBeginSlot;
                  slot < EquipmentIndex.ExtraWeaponSlot;
                  slot++)
@@ -791,10 +832,35 @@ namespace LeftHandSward.Skills
                     continue;
 
                 if (weapon.CurrentUsageItem.IsMeleeWeapon)
+                {
+                    LeftHandSwardLog.Warn(
+                        "OffHandProbe",
+                        "Falling back to generic melee candidate"
+                        + " slot=" + slot
+                        + " weapon=" + DescribeMissionWeapon(weapon));
                     return slot;
+                }
             }
 
             return EquipmentIndex.None;
+        }
+
+        private static bool HasOneHandCapableMeleeUsage(MissionWeapon weapon)
+        {
+            if (weapon.IsEmpty || weapon.Item == null)
+                return false;
+
+            for (int i = 0; i < weapon.WeaponsCount; i++)
+            {
+                WeaponComponentData usage = weapon.GetWeaponComponentDataForUsage(i);
+                if (usage == null || !usage.IsMeleeWeapon)
+                    continue;
+
+                if (!usage.WeaponFlags.HasAnyFlag(WeaponFlags.NotUsableWithOneHand))
+                    return true;
+            }
+
+            return false;
         }
 
         private static int GetMainHandUsageIndex(Agent agent)

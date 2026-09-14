@@ -23,10 +23,9 @@ All current experiments are `SPSkillType.SubActive`, so they use New_ZZZF's exis
 
 - `LHTest_NativeRightBaseline` — right-hand native attack baseline
 - `LHTest_MetaMeshVisualClone` — old MetaMesh visual-copy baseline
-- `LHTest_AttachWeaponToLeftBone` — native AttachWeaponToBone with Identity frame
-- `LHTest_LeftGripTransform` — transplant the live right-hand grip transform to the off-hand item bone
-- `LHTest_OffHandStateProbe` — establish a real native OffHand from a second existing melee weapon slot, without attacking
-- `LHTest_OffHandNativeAttack` — with a valid OffHand already present, inject native attack input and observe which hand/weapon owns the sweep
+- `LHTest_AttachWeaponToLeftBone` — validated native left-hand visual attachment with Identity frame
+- `LHTest_OffHandStateProbe` — validated native OffHand state probe, without attacking
+- `LHTest_OffHandNativeAttack` — auto-establish OffHand and inject native attack input in the same activation
 
 The experiment names and SkillIDs now describe the exact purpose of each test. The four older direction-only names were removed because AttackLeft/Right/Up/Down describe attack direction, not handedness.
 
@@ -44,7 +43,7 @@ Campaign starts loading
 
 New_ZZZF.OnNewGameCreated / OnGameLoaded is about to run
     -> LeftHandSward Harmony Prefix
-    -> SkillFactory.RegisterSkill(...) for all 6 external skills
+    -> SkillFactory.RegisterSkill(...) for all 5 external skills
     -> New_ZZZF original callback continues
        -> CompositeSpellRegistry.LoadAndRegisterAll()
        -> SkillFactory.SkillToItemObject()
@@ -181,3 +180,17 @@ The new experiment order is deliberately staged:
 6. only after experiment 5 succeeds, inject native attack input and observe whether the native sweep follows MainHand or OffHand.
 
 Experiment 5 intentionally requires a second melee weapon already present in another equipment slot. It does not construct a temporary ItemObject and does not call EquipWeaponWithNewEntity.
+
+
+## 2026-09-14 real-game result: native OffHand established
+
+The latest real-game run validated two important native paths:
+
+- `Agent.AttachWeaponToBone(current MissionWeapon, null, Monster.OffHandItemBoneIndex, Identity)` places the visual weapon correctly at the left-hand item bone. This is now the visual baseline.
+- `SetWieldedItemIndexAsClient(HandIndex.OffHand, existingSlot, ...)` successfully creates a true native OffHand state. The log showed a non-None offhand slot, valid OffHand WeaponInfo, and a populated WieldedOffhandWeapon.
+
+The `LHTest_LeftGripTransform` experiment was removed from registration. Its reconstructed local origins were roughly 0.73-0.79 meters, showing that the live animated weapon world transform was not a stable grip-local offset for this purpose.
+
+The attack experiment now establishes OffHand and queues MovementFlags attack input in the same skill activation, so changing missions or switching skill loadouts cannot invalidate the prerequisite before the attack probe runs.
+
+OffHand candidate selection now prefers a melee item that has at least one usage without `WeaponFlags.NotUsableWithOneHand`. Generic melee is retained only as a fallback for diagnostics.

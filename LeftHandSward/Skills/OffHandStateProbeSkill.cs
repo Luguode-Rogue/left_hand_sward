@@ -14,8 +14,8 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("实验5-真实OffHand状态探针");
-            Description = new TextObject("要求另一个武器槽中已有第二把合法近战武器。只调用 SetWieldedItemIndexAsClient(OffHand, slot) 建立原生 OffHand 状态；不创建临时 ItemObject，不攻击。");
+            Text = new TextObject("实验4-真实OffHand状态探针");
+            Description = new TextObject("实机已验证可建立 valid OffHand。优先选择另一个武器槽中可单手使用的近战武器；只建立 native OffHand，不攻击。");
         }
 
         public override bool Activate(Agent casterAgent)
