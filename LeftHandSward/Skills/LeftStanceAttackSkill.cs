@@ -14,35 +14,32 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("左手测试-镜像LeftStance动作");
-            Description = new TextObject("按副主动技能键 LeftAlt 独立使用原版 slashleft_1h_left_stance 释放动作，并叠加换手/左手攻击 flags，测试左右镜像方向。");
+            Text = new TextObject("左手测试-副手状态+原生攻击");
+            Description = new TextObject("按 LeftAlt：先让原生系统尝试切换副手，再从 IPlayerInputEffector 注入原生攻击；观察副手状态是否影响 native melee。");
         }
 
         public override bool Activate(Agent casterAgent)
         {
             LeftHandAttackRuntime.TraceSkillActivation(Id, casterAgent);
-            if (!LeftHandAttackRuntime.TryGetActiveMeleeWeapon(casterAgent, out _, out string error))
+
+            if (!LeftHandAttackRuntime.ProbeOffhand(
+                    casterAgent,
+                    true,
+                    out string probeResult))
             {
-                LeftHandAttackRuntime.Report(Id + " 失败: " + error);
+                LeftHandAttackRuntime.Report(Id + " 副手探针失败: " + probeResult);
                 return false;
             }
 
-            AnimFlags flags = AnimFlags.anf_switch_item_between_hands
-                            | AnimFlags.anf_stick_item_to_left_hand
-                            | AnimFlags.anf_use_left_hand_during_attack
-                            | AnimFlags.anf_enable_left_hand_ik;
-
-            bool ok = LeftHandAttackRuntime.PlayAction(
+            bool attackOk = LeftHandAttackRuntime.QueueNativeAttack(
                 casterAgent,
-                "act_release_slashleft_1h_left_stance",
-                flags,
-                out string result);
+                Id,
+                Agent.MovementControlFlag.AttackRight,
+                out string attackResult);
 
-            if (ok)
-                LeftHandAttackRuntime.BeginMeleeObservation(casterAgent, Id);
-
-            LeftHandAttackRuntime.Report(Id + " " + result);
-            return ok;
+            LeftHandAttackRuntime.Report(
+                Id + " offhand={" + probeResult + "} nativeAttack={" + attackResult + "}");
+            return attackOk;
         }
     }
 }
