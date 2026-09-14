@@ -88,6 +88,18 @@ internal static class Program
                     + sourceClip
                     + " (action=" + sourceAction + ")");
 
+            string donorReport = Path.Combine(
+                outputDirectory,
+                "left_hand_motion_donor.txt");
+            File.WriteAllText(
+                donorReport,
+                "sourceAction=" + sourceAction + Environment.NewLine
+                + "sourceClip=" + sourceClip + Environment.NewLine
+                + "sourcePackage=" + source.SourcePackage + Environment.NewLine
+                + "outputClip=" + OutputClip + Environment.NewLine
+                + "colliderFlag=" + LeftColliderFlag + Environment.NewLine,
+                Encoding.UTF8);
+
             byte[] patchedMetadata =
                 AddFlag(source.Metadata, LeftColliderFlag);
 
