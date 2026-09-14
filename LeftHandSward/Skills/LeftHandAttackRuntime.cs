@@ -51,6 +51,10 @@ namespace LeftHandSward.Skills
         private static float _leftHandRewriteUntil;
         private static bool _leftHandRewriteApplied;
 
+        private static bool _deferredOffHandRestorePending;
+        private static float _deferredOffHandRestoreAt;
+        private static string _deferredOffHandRestoreReason;
+
 
         public static bool TryGetActiveWeapon(Agent agent, out MissionWeapon weapon, out string error)
         {
@@ -720,6 +724,7 @@ namespace LeftHandSward.Skills
             if (mission == null)
                 return;
 
+            TickDeferredOffHandRestore(mission);
             TickNativeLeftHandRewrite(mission);
 
             for (int i = _visualClones.Count - 1; i >= 0; i--)
@@ -796,6 +801,10 @@ namespace LeftHandSward.Skills
             _queuedNativeAttackFlag = Agent.MovementControlFlag.None;
 
             ClearMeleeObservation();
+
+            _deferredOffHandRestorePending = false;
+            _deferredOffHandRestoreReason = null;
+            RestoreOffHandProbe();
         }
 
         public static void RemoveVisualClone(Agent agent)
@@ -1051,7 +1060,57 @@ namespace LeftHandSward.Skills
             _leftHandRewriteApplied = false;
 
             if (restoreOffHand)
-                RestoreOffHandProbe();
+                ScheduleOffHandRestore(reason);
+        }
+
+        private static void ScheduleOffHandRestore(string reason)
+        {
+            if (_offHandProbeAgent == null)
+                return;
+
+            Mission mission = _offHandProbeAgent.Mission;
+            _deferredOffHandRestorePending = true;
+            _deferredOffHandRestoreAt = (mission == null ? 0f : mission.CurrentTime) + 0.12f;
+            _deferredOffHandRestoreReason = reason;
+
+            LeftHandSwardLog.Info(
+                "LeftHandNative",
+                "Deferred OffHand restore scheduled"
+                + " at=" + _deferredOffHandRestoreAt
+                + " reason=" + reason);
+        }
+
+        private static void TickDeferredOffHandRestore(Mission mission)
+        {
+            if (!_deferredOffHandRestorePending)
+                return;
+
+            Agent agent = _offHandProbeAgent;
+            if (agent == null || agent.State != AgentState.Active)
+            {
+                _deferredOffHandRestorePending = false;
+                _deferredOffHandRestoreReason = null;
+                return;
+            }
+
+            if (mission.CurrentTime < _deferredOffHandRestoreAt)
+                return;
+
+            Agent.ActionCodeType actionType = agent.GetCurrentActionType(1);
+            if (actionType == Agent.ActionCodeType.ReleaseMelee)
+                return;
+
+            string reason = _deferredOffHandRestoreReason;
+            _deferredOffHandRestorePending = false;
+            _deferredOffHandRestoreReason = null;
+
+            LeftHandSwardLog.Info(
+                "LeftHandNative",
+                "Deferred OffHand restore executing"
+                + " actionType=" + actionType
+                + " reason=" + (reason ?? "null"));
+
+            RestoreOffHandProbe();
         }
 
         private static int GetMainHandUsageIndex(Agent agent)
@@ -1069,6 +1128,9 @@ namespace LeftHandSward.Skills
 
         private static void RestoreOffHandProbe()
         {
+            _deferredOffHandRestorePending = false;
+            _deferredOffHandRestoreReason = null;
+
             Agent agent = _offHandProbeAgent;
             EquipmentIndex previous = _offHandProbePreviousIndex;
             EquipmentIndex current = _offHandProbeCurrentIndex;

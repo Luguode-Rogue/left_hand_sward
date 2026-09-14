@@ -210,3 +210,6 @@ The new `LHTest_NativeLeftHandAttack` is intentionally strict and short-lived:
 7. hit, timeout, state change, or mission cleanup automatically restores the temporary OffHand state.
 
 This is the last native handedness experiment before falling back to a custom left-hand sweep/damage implementation.
+
+
+Safety detail: OffHand restoration is not performed inside `OnMeleeHit`. Hit/timeout completion schedules a deferred restore; the Mission tick waits at least 0.12 seconds and also waits until channel 1 is no longer `ReleaseMelee` before touching native wield state. Mission teardown still performs direct cleanup.
