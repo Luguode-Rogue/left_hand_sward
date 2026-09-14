@@ -1117,6 +1117,10 @@ namespace LeftHandSward.Skills
             bool attackBoneMatchesOff =
                 attackBone >= 0 && attackBone == offItemBone;
 
+            string attackBoneName = SafeBoneName(attacker, attackBone);
+            string mainItemBoneName = SafeBoneName(attacker, mainItemBone);
+            string offItemBoneName = SafeBoneName(attacker, offItemBone);
+
             LeftHandSwardLog.Info(
                 "NativeBlow",
                 "skill=" + _pendingAttackSkillId
@@ -1128,9 +1132,9 @@ namespace LeftHandSward.Skills
                 + " collisionMatchesOffHand=" + matchesOffHand
                 + " blowMatchesPrimary=" + blowMatchesPrimary
                 + " blowMatchesOffHand=" + blowMatchesOffHand
-                + " attackBone=" + attackBone
-                + " mainItemBone=" + mainItemBone
-                + " offItemBone=" + offItemBone
+                + " attackBone=" + attackBone + "/" + attackBoneName
+                + " mainItemBone=" + mainItemBone + "/" + mainItemBoneName
+                + " offItemBone=" + offItemBone + "/" + offItemBoneName
                 + " attackBoneMatchesMain=" + attackBoneMatchesMain
                 + " attackBoneMatchesOff=" + attackBoneMatchesOff
                 + " alternative=" + collisionData.IsAlternativeAttack
@@ -1838,6 +1842,36 @@ namespace LeftHandSward.Skills
             catch
             {
                 return "<name-error>";
+            }
+        }
+
+        private static string SafeBoneName(Agent agent, sbyte boneIndex)
+        {
+            if (agent == null ||
+                boneIndex < 0 ||
+                agent.AgentVisuals == null)
+            {
+                return "<invalid>";
+            }
+
+            try
+            {
+                Skeleton skeleton = agent.AgentVisuals.GetSkeleton();
+                if (skeleton == null || !skeleton.IsValid)
+                    return "<no-skeleton>";
+
+                sbyte count = skeleton.GetBoneCount();
+                if (boneIndex >= count)
+                    return "<out-of-range>";
+
+                string name = skeleton.GetBoneName(boneIndex);
+                return string.IsNullOrWhiteSpace(name)
+                    ? "<unnamed>"
+                    : name;
+            }
+            catch (Exception ex)
+            {
+                return "<" + ex.GetType().Name + ">";
             }
         }
 
