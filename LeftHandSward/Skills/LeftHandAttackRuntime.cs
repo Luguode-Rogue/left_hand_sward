@@ -32,11 +32,21 @@ namespace LeftHandSward.Skills
             "act_lhs_release_leftarm_weapon_1h";
         private const string LeftReleaseActionName2H =
             "act_lhs_release_leftarm_weapon_2h";
+        private const string StickReleaseActionName1H =
+            "act_lhs_release_leftarm_stick_weapon_1h";
+        private const string StickReleaseActionName2H =
+            "act_lhs_release_leftarm_stick_weapon_2h";
         private static ActionIndexCache _leftReleaseAction1H =
             ActionIndexCache.act_none;
         private static ActionIndexCache _leftReleaseAction2H =
             ActionIndexCache.act_none;
+        private static ActionIndexCache _stickReleaseAction1H =
+            ActionIndexCache.act_none;
+        private static ActionIndexCache _stickReleaseAction2H =
+            ActionIndexCache.act_none;
         private static bool _leftReleaseActionsResolved;
+        private static readonly AnimFlags StickItemToLeftHandFlag =
+            (AnimFlags)0x80000UL;
 
         private static Agent _offHandProbeAgent;
         private static EquipmentIndex _offHandProbePreviousIndex = EquipmentIndex.None;
@@ -58,6 +68,7 @@ namespace LeftHandSward.Skills
         private static EquipmentIndex _leftHandRewritePrimarySlot = EquipmentIndex.None;
         private static float _leftHandRewriteUntil;
         private static bool _leftHandRewriteApplied;
+        private static bool _leftHandRewriteStickItemProbe;
 
         private static bool _deferredOffHandRestorePending;
         private static float _deferredOffHandRestoreAt;
@@ -673,6 +684,109 @@ namespace LeftHandSward.Skills
                 out result);
         }
 
+        public static bool StartStickItemWeaponSweepProbe(
+            Agent agent,
+            string skillId,
+            out string result)
+        {
+            if (agent == null || agent.State != AgentState.Active)
+            {
+                result = "Agent 不可用";
+                return false;
+            }
+
+            if (agent.Mission == null || agent.Mission.MainAgent != agent)
+            {
+                result = "StickItem 武器碰撞探针只支持 MainAgent";
+                LeftHandSwardLog.Warn("StickItemProbe", result);
+                return false;
+            }
+
+            if (!TryResolveLeftReleaseActions(out string actionError))
+            {
+                result = actionError;
+                return false;
+            }
+
+            if (!TryGetActiveMeleeWeapon(
+                    agent,
+                    out MissionWeapon mainWeapon,
+                    out string weaponError))
+            {
+                result = weaponError;
+                return false;
+            }
+
+            EquipmentIndex primary =
+                agent.GetPrimaryWieldedItemIndex();
+            if (primary == EquipmentIndex.None)
+            {
+                result = "当前没有主手武器槽";
+                LeftHandSwardLog.Warn("StickItemProbe", result);
+                return false;
+            }
+
+            if (_leftHandRewriteAgent != null)
+            {
+                result = "上一轮左手攻击/碰撞探针仍在执行";
+                LeftHandSwardLog.Warn(
+                    "StickItemProbe",
+                    result + " hands={" + DescribeHands(agent) + "}");
+                return false;
+            }
+
+            // Keep this test single-variable. Remove any visual-only leftovers from
+            // experiments 2/3, then do NOT create a clone or AttachWeaponToBone.
+            // The only mechanism allowed to move the weapon is the baked
+            // stick_item_to_left_hand animation flag.
+            RemoveVisualClone(agent);
+            RemoveNativeBoneAttachment(agent);
+
+            WeakGameEntity weaponEntity =
+                agent.GetWeaponEntityFromEquipmentSlot(primary);
+
+            LeftHandSwardLog.Info(
+                "StickItemProbe",
+                "ARMED"
+                + " skill=" + skillId
+                + " primary=" + primary
+                + " weapon=" + DescribeMissionWeapon(mainWeapon)
+                + " entityValid=" + weaponEntity.IsValid
+                + " entity=" + SafeEntityName(weaponEntity)
+                + " visualClone=false"
+                + " boneAttach=false"
+                + " leftCollider=false"
+                + " stickItemToLeftHand=true");
+
+            _leftHandRewriteAgent = agent;
+            _leftHandRewriteSkillId = skillId;
+            _leftHandRewritePrimarySlot = primary;
+            _leftHandRewriteUntil = agent.Mission.CurrentTime + 2.0f;
+            _leftHandRewriteApplied = false;
+            _leftHandRewriteStickItemProbe = true;
+
+            bool queued = QueueNativeAttack(
+                agent,
+                skillId,
+                Agent.MovementControlFlag.AttackRight,
+                out string queueResult);
+
+            if (!queued)
+            {
+                AbortNativeLeftHandRewrite(
+                    "StickItem native input queue failed: " + queueResult);
+                result = queueResult;
+                return false;
+            }
+
+            result =
+                "StickItem 单变量探针已启动：无视觉复制/骨骼挂载，"
+                + "ReleaseMelee 保留左臂 motion 与武器 CombatParameter，"
+                + "移除 use_left_hand_during_attack，仅启用 stick_item_to_left_hand；"
+                + "请用明显超出盾击距离的目标测试武器长度碰撞";
+            return true;
+        }
+
         private static bool TryResolveLeftReleaseActions(
             out string error)
         {
@@ -684,11 +798,17 @@ namespace LeftHandSward.Skills
                     ActionIndexCache.Create(LeftReleaseActionName1H);
                 _leftReleaseAction2H =
                     ActionIndexCache.Create(LeftReleaseActionName2H);
+                _stickReleaseAction1H =
+                    ActionIndexCache.Create(StickReleaseActionName1H);
+                _stickReleaseAction2H =
+                    ActionIndexCache.Create(StickReleaseActionName2H);
                 _leftReleaseActionsResolved = true;
             }
 
             if (_leftReleaseAction1H.Index < 0 ||
-                _leftReleaseAction2H.Index < 0)
+                _leftReleaseAction2H.Index < 0 ||
+                _stickReleaseAction1H.Index < 0 ||
+                _stickReleaseAction2H.Index < 0)
             {
                 error =
                     "左臂 ReleaseMelee action 未完整注册"
@@ -696,6 +816,10 @@ namespace LeftHandSward.Skills
                     + "/" + _leftReleaseAction1H.Index
                     + " 2H=" + LeftReleaseActionName2H
                     + "/" + _leftReleaseAction2H.Index
+                    + " stick1H=" + StickReleaseActionName1H
+                    + "/" + _stickReleaseAction1H.Index
+                    + " stick2H=" + StickReleaseActionName2H
+                    + "/" + _stickReleaseAction2H.Index
                     + "。请重新编译模块并重新生成左手 TPAC。";
                 LeftHandSwardLog.Warn("LeftHandNative", error);
                 return false;
@@ -705,14 +829,22 @@ namespace LeftHandSward.Skills
                 MBAnimation.GetActionType(_leftReleaseAction1H);
             Agent.ActionCodeType type2H =
                 MBAnimation.GetActionType(_leftReleaseAction2H);
+            Agent.ActionCodeType stickType1H =
+                MBAnimation.GetActionType(_stickReleaseAction1H);
+            Agent.ActionCodeType stickType2H =
+                MBAnimation.GetActionType(_stickReleaseAction2H);
 
             if (type1H != Agent.ActionCodeType.ReleaseMelee ||
-                type2H != Agent.ActionCodeType.ReleaseMelee)
+                type2H != Agent.ActionCodeType.ReleaseMelee ||
+                stickType1H != Agent.ActionCodeType.ReleaseMelee ||
+                stickType2H != Agent.ActionCodeType.ReleaseMelee)
             {
                 error =
                     "左臂 action 类型错误"
                     + " 1H=" + type1H
-                    + " 2H=" + type2H;
+                    + " 2H=" + type2H
+                    + " stick1H=" + stickType1H
+                    + " stick2H=" + stickType2H;
                 LeftHandSwardLog.Warn("LeftHandNative", error);
                 return false;
             }
@@ -723,7 +855,11 @@ namespace LeftHandSward.Skills
                 + " 1H=" + LeftReleaseActionName1H
                 + "/" + _leftReleaseAction1H.Index
                 + " 2H=" + LeftReleaseActionName2H
-                + "/" + _leftReleaseAction2H.Index);
+                + "/" + _leftReleaseAction2H.Index
+                + " stick1H=" + StickReleaseActionName1H
+                + "/" + _stickReleaseAction1H.Index
+                + " stick2H=" + StickReleaseActionName2H
+                + "/" + _stickReleaseAction2H.Index);
             return true;
         }
 
@@ -805,6 +941,7 @@ namespace LeftHandSward.Skills
             _leftHandRewritePrimarySlot = primary;
             _leftHandRewriteUntil = agent.Mission.CurrentTime + 2.0f;
             _leftHandRewriteApplied = false;
+            _leftHandRewriteStickItemProbe = false;
 
             LeftHandSwardLog.Info(
                 "LeftHandNative",
@@ -1177,15 +1314,27 @@ namespace LeftHandSward.Skills
                          WeaponFlags.NotUsableWithOneHand));
 
                 ActionIndexCache selectedRelease =
-                    use2HCombat
-                        ? _leftReleaseAction2H
-                        : _leftReleaseAction1H;
+                    _leftHandRewriteStickItemProbe
+                        ? (use2HCombat
+                            ? _stickReleaseAction2H
+                            : _stickReleaseAction1H)
+                        : (use2HCombat
+                            ? _leftReleaseAction2H
+                            : _leftReleaseAction1H);
                 string selectedReleaseName =
-                    use2HCombat
-                        ? LeftReleaseActionName2H
-                        : LeftReleaseActionName1H;
+                    _leftHandRewriteStickItemProbe
+                        ? (use2HCombat
+                            ? StickReleaseActionName2H
+                            : StickReleaseActionName1H)
+                        : (use2HCombat
+                            ? LeftReleaseActionName2H
+                            : LeftReleaseActionName1H);
                 string combatProfile =
                     use2HCombat ? "weapon-2H" : "weapon-1H";
+                string releaseMode =
+                    _leftHandRewriteStickItemProbe
+                        ? "stick-item-main-weapon-sweep"
+                        : "left-hand-collider";
 
                 AnimFlags beforeFlags =
                     agent.GetCurrentAnimationFlag(1);
@@ -1196,6 +1345,7 @@ namespace LeftHandSward.Skills
                     + " vanilla=" + currentName
                     + " custom=" + selectedReleaseName
                     + " combatProfile=" + combatProfile
+                    + " releaseMode=" + releaseMode
                     + " motionDonor=NativeOffHandShieldBash"
                     + " progress=" + progress
                     + " beforeFlags=" + beforeFlags
@@ -1223,6 +1373,8 @@ namespace LeftHandSward.Skills
                 bool leftColliderFlag =
                     (afterFlags &
                      AnimFlags.anf_use_left_hand_during_attack) != 0;
+                bool stickItemFlag =
+                    (afterFlags & StickItemToLeftHandFlag) != 0;
 
                 LeftHandSwardLog.Info(
                     "LeftHandNative",
@@ -1232,17 +1384,26 @@ namespace LeftHandSward.Skills
                     + " afterType=" + agent.GetCurrentActionType(1)
                     + " afterStage=" + agent.GetCurrentActionStage(1)
                     + " afterFlags=" + afterFlags
-                    + " leftColliderFlag=" + leftColliderFlag);
+                    + " releaseMode=" + releaseMode
+                    + " leftColliderFlag=" + leftColliderFlag
+                    + " stickItemFlag=" + stickItemFlag);
+
+                bool flagsValid =
+                    _leftHandRewriteStickItemProbe
+                        ? (stickItemFlag && !leftColliderFlag)
+                        : leftColliderFlag;
 
                 if (!accepted ||
                     agent.GetCurrentActionType(1) !=
                         Agent.ActionCodeType.ReleaseMelee ||
-                    !leftColliderFlag)
+                    !flagsValid)
                 {
                     AbortNativeLeftHandRewrite(
                         "自定义左手 ReleaseMelee 未被引擎正确接受"
                         + " accepted=" + accepted
-                        + " leftColliderFlag=" + leftColliderFlag);
+                        + " mode=" + releaseMode
+                        + " leftColliderFlag=" + leftColliderFlag
+                        + " stickItemFlag=" + stickItemFlag);
                     return;
                 }
             }
@@ -1273,6 +1434,7 @@ namespace LeftHandSward.Skills
             _leftHandRewritePrimarySlot = EquipmentIndex.None;
             _leftHandRewriteUntil = 0f;
             _leftHandRewriteApplied = false;
+            _leftHandRewriteStickItemProbe = false;
         }
 
         private static void ScheduleOffHandRestore(string reason)
