@@ -10,5 +10,11 @@
     <action
       type="act_lhs_release_leftarm_weapon_2h"
       animation="lhs_release_left_arm_weapon_2h_clip" />
+    <action
+      type="act_lhs_release_leftarm_stick_weapon_1h"
+      animation="lhs_release_left_arm_stick_weapon_1h_clip" />
+    <action
+      type="act_lhs_release_leftarm_stick_weapon_2h"
+      animation="lhs_release_left_arm_stick_weapon_2h_clip" />
   </action_set>
 </action_sets>
