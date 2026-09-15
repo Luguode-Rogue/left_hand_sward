@@ -11,6 +11,10 @@ internal static class Program
         new("df24ae53-2ac7-4fa5-88b7-4ee0a6e7f9cc");
     private static readonly Guid OutputAssetGuid2H =
         new("6d2a0b72-5dcc-4f7f-993f-749c7d0bfef1");
+    private static readonly Guid OutputAssetGuidStick1H =
+        new("cb483fa8-48b8-4ad5-bcc7-8bed6633506e");
+    private static readonly Guid OutputAssetGuidStick2H =
+        new("910d560e-c2e9-46fc-ab92-f29b31c98f9f");
 
     private static readonly string[] PreferredLeftArmSourceActions =
     {
@@ -38,8 +42,14 @@ internal static class Program
         "lhs_release_left_arm_weapon_1h_clip";
     private const string OutputClip2H =
         "lhs_release_left_arm_weapon_2h_clip";
+    private const string OutputClipStick1H =
+        "lhs_release_left_arm_stick_weapon_1h_clip";
+    private const string OutputClipStick2H =
+        "lhs_release_left_arm_stick_weapon_2h_clip";
     private const string LeftColliderFlag =
         "use_left_hand_during_attack";
+    private const string StickItemToLeftHandFlag =
+        "stick_item_to_left_hand";
 
     private sealed class SegmentRecord
     {
@@ -163,6 +173,29 @@ internal static class Program
                         weaponCombat2H),
                     LeftColliderFlag);
 
+            // Single-variable weapon-sweep probe:
+            // preserve the exact same left-arm donor motion and weapon combat
+            // parameters, but REMOVE the hand-collider selector and ask the native
+            // animation system to rigidly parent the held item to the left hand.
+            // If melee reach now follows weapon length, the engine is sweeping the
+            // real main-hand weapon collider rather than l_hand/shield-bash range.
+            byte[] metadataStick1H =
+                AddFlag(
+                    RemoveFlag(
+                        ReplaceCombatParameterId(
+                            source.Metadata,
+                            weaponCombat1H),
+                        LeftColliderFlag),
+                    StickItemToLeftHandFlag);
+            byte[] metadataStick2H =
+                AddFlag(
+                    RemoveFlag(
+                        ReplaceCombatParameterId(
+                            source.Metadata,
+                            weaponCombat2H),
+                        LeftColliderFlag),
+                    StickItemToLeftHandFlag);
+
             OutputClipRecord[] outputs =
             {
                 new OutputClipRecord
@@ -176,6 +209,18 @@ internal static class Program
                     Name = OutputClip2H,
                     AssetGuid = OutputAssetGuid2H,
                     Metadata = metadata2H
+                },
+                new OutputClipRecord
+                {
+                    Name = OutputClipStick1H,
+                    AssetGuid = OutputAssetGuidStick1H,
+                    Metadata = metadataStick1H
+                },
+                new OutputClipRecord
+                {
+                    Name = OutputClipStick2H,
+                    AssetGuid = OutputAssetGuidStick2H,
+                    Metadata = metadataStick2H
                 }
             };
 
@@ -198,7 +243,12 @@ internal static class Program
                 + "mode=offhand-motion-with-weapon-combat-parameter" + Environment.NewLine
                 + "outputClip1H=" + OutputClip1H + Environment.NewLine
                 + "outputClip2H=" + OutputClip2H + Environment.NewLine
-                + "colliderFlag=" + LeftColliderFlag + Environment.NewLine,
+                + "colliderFlag=" + LeftColliderFlag + Environment.NewLine
+                + "probeMode=stick-item-to-left-hand-with-main-weapon-sweep" + Environment.NewLine
+                + "probeOutputClip1H=" + OutputClipStick1H + Environment.NewLine
+                + "probeOutputClip2H=" + OutputClipStick2H + Environment.NewLine
+                + "probeAddFlag=" + StickItemToLeftHandFlag + Environment.NewLine
+                + "probeRemoveFlag=" + LeftColliderFlag + Environment.NewLine,
                 Encoding.UTF8);
 
             WriteClipPackage(
@@ -216,6 +266,7 @@ internal static class Program
                 + " donorCombat=" + donorCombat
                 + " combat1H=" + weaponCombat1H
                 + " combat2H=" + weaponCombat2H
+                + " probeFlag=" + StickItemToLeftHandFlag
                 + " output=" + output);
             return 0;
         }
@@ -710,6 +761,80 @@ internal static class Program
         {
             flags.Add(flag);
         }
+
+        using MemoryStream output = new();
+        output.Write(metadata, 0, checked((int)flagsStart));
+
+        using (BinaryWriter bw =
+               new(output, Encoding.UTF8, leaveOpen: true))
+        {
+            bw.Write(flags.Count);
+            foreach (string value in flags)
+                WriteSizedString(bw, value);
+        }
+
+        output.Write(
+            metadata,
+            checked((int)tailStart),
+            metadata.Length - checked((int)tailStart));
+
+        return output.ToArray();
+    }
+
+    private static byte[] RemoveFlag(
+        byte[] metadata,
+        string flag)
+    {
+        using MemoryStream ms = new(metadata, writable: false);
+        using BinaryReader br = new(ms, Encoding.UTF8, leaveOpen: true);
+
+        uint version = br.ReadUInt32();
+
+        br.BaseStream.Seek(6 * sizeof(float), SeekOrigin.Current);
+        br.ReadInt32();
+        br.BaseStream.Seek(16, SeekOrigin.Current);
+        br.BaseStream.Seek(4 * sizeof(float), SeekOrigin.Current);
+
+        for (int i = 0; i < 5; i++)
+            SkipSizedString(br);
+
+        br.ReadInt32();
+        br.ReadInt32();
+        SkipSizedString(br);
+        br.ReadSingle();
+        br.ReadSingle();
+        br.ReadBoolean();
+        br.ReadInt32();
+
+        if (version >= 4)
+        {
+            SkipSizedString(br);
+            SkipSizedString(br);
+            SkipSizedString(br);
+            if (version >= 5)
+                br.ReadSByte();
+            br.ReadUInt32();
+            br.ReadUInt16();
+        }
+        else
+        {
+            br.ReadUInt32();
+        }
+
+        long flagsStart = br.BaseStream.Position;
+        int count = br.ReadInt32();
+        if (count < 0 || count > 1024)
+            throw new InvalidDataException("invalid animation flag count");
+
+        List<string> flags = new(count);
+        for (int i = 0; i < count; i++)
+        {
+            string value = ReadSizedString(br);
+            if (!string.Equals(value, flag, StringComparison.Ordinal))
+                flags.Add(value);
+        }
+
+        long tailStart = br.BaseStream.Position;
 
         using MemoryStream output = new();
         output.Write(metadata, 0, checked((int)flagsStart));
