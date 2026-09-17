@@ -119,10 +119,13 @@ namespace LeftHandSward
             SkillFactory.RegisterSkill(
                 StickItemWeaponSweepProbeSkill.Id,
                 new StickItemWeaponSweepProbeSkill());
+            SkillFactory.RegisterSkill(
+                RightHandHitChainSkill.Id,
+                new RightHandHitChainSkill());
 
             _skillsRegistered = true;
-            LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills SUCCESS count=5");
-            Debug.Print("[LeftHandSward] Registered 5 New_ZZZF extension skills.");
+            LeftHandSwardLog.Info("SkillRegistry", "RegisterSkills SUCCESS count=6");
+            Debug.Print("[LeftHandSward] Registered 6 New_ZZZF extension skills.");
         }
     }
 
