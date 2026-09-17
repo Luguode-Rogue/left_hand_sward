@@ -14,14 +14,16 @@ namespace LeftHandSward.Skills
             Type = SPSkillType.SubActive;
             Cooldown = 0f;
             ResourceCost = 0f;
-            Text = new TextObject("右手命中连击Release测试");
+            Text = new TextObject("右手完整原生连击测试");
             Description = new TextObject(
-                "纯原版右手动作测试：第一刀通过AttackRight正常进入原生攻击；"
+                "纯原版右手动作测试：每一刀都通过AttackRight重新进入Bannerlord原生近战状态机。"
                 + "直接命中、盾挡、武器格挡/招架都会触发下一轮。"
-                + "命中事件只安排连击，不在碰撞回调里改动作；下一Tick先向当前动作通道发送act_none结束上一轮ReleaseMelee，"
-                + "确认引擎已经离开ReleaseMelee后，再隔一Tick重启同一个原版Release。"
-                + "每成功触发下一段，动作速度在上一段基础上提高10%；一次挥击无论命中多少目标只触发一次下一段。"
-                + "用于验证显式结束上一轮后，ReleaseMelee是否可以连续重新武装原生碰撞，而不重新经过AttackReady。");
+                + "命中事件只安排连击；下一Tick先发送act_none结束上一轮攻击，确认已经离开Release/Blocked/Parried等攻击状态后，"
+                + "再隔一Tick重新注入AttackRight，让引擎完整生成AttackReady→ReleaseMelee。"
+                + "第二刀起，当前连击倍率会同时应用到Ready与Release动作，每轮在上一轮基础上提高10%。"
+                + "一次挥击无论命中多少目标只触发一次下一段。"
+                + "用于验证取消后摇后，完整原生攻击能否连续重新武装碰撞。"
+            );
         }
 
         public override bool Activate(Agent casterAgent)
