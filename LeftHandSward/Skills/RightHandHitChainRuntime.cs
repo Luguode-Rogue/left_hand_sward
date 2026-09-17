@@ -254,7 +254,7 @@ namespace LeftHandSward.Skills
 
             string beforeAction = _agent.GetCurrentAction(1).GetName();
             Agent.ActionCodeType beforeType = _agent.GetCurrentActionType(1);
-            Agent.ActionStage beforeStage = _agent.GetCurrentActionStage(1);
+            var beforeStage = _agent.GetCurrentActionStage(1);
 
             LeftHandSwardLog.Info(
                 "RightChain",
@@ -270,7 +270,7 @@ namespace LeftHandSward.Skills
                 1,
                 _releaseAction,
                 true,
-                AnimFlags.None,
+                (AnimFlags)0UL,
                 0f,
                 _pendingSpeed,
                 0f,
