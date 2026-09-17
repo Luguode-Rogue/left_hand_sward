@@ -18,6 +18,7 @@ namespace LeftHandSward
         {
             LeftHandSwardLog.Info("Mission", "LeftHandAttackMissionBehavior ctor");
             LeftHandAttackRuntime.Cleanup();
+            RightHandHitChainRuntime.Cleanup();
         }
 
         public override MissionBehaviorType BehaviorType => MissionBehaviorType.Other;
@@ -31,6 +32,7 @@ namespace LeftHandSward
         {
             base.OnMissionTick(dt);
             LeftHandAttackRuntime.Tick(Mission);
+            RightHandHitChainRuntime.Tick(Mission);
         }
 
         public override void OnMeleeHit(
@@ -47,11 +49,26 @@ namespace LeftHandSward
                     "Mission",
                     "OnMeleeHit player"
                     + " canceled=" + isCanceled
+                    + " blockedWithShield=" + collisionData.AttackBlockedWithShield
+                    + " result=" + collisionData.CollisionResult
                     + " dir=" + collisionData.AttackDirection
                     + " progress=" + collisionData.AttackProgress);
             }
 
-            LeftHandAttackRuntime.NotifyMeleeHit(attacker, victim, isCanceled, collisionData);
+            // The right-hand chain probe intentionally sees the raw melee contact
+            // before the generic observation is cleared. It accepts blocked/canceled
+            // contacts as valid combo triggers.
+            RightHandHitChainRuntime.NotifyMeleeHit(
+                attacker,
+                victim,
+                isCanceled,
+                collisionData);
+
+            LeftHandAttackRuntime.NotifyMeleeHit(
+                attacker,
+                victim,
+                isCanceled,
+                collisionData);
         }
 
         public override void OnRegisterBlow(
@@ -92,12 +109,14 @@ namespace LeftHandSward
                 LeftHandSwardLog.Info("Mission", "MainAgent removed state=" + agentState);
             }
 
+            RightHandHitChainRuntime.OnAgentRemoved(affectedAgent);
             LeftHandAttackRuntime.RemoveVisualClone(affectedAgent);
         }
 
         protected override void OnEndMission()
         {
             LeftHandSwardLog.Info("Mission", "OnEndMission cleanup");
+            RightHandHitChainRuntime.Cleanup();
             LeftHandAttackRuntime.Cleanup();
             base.OnEndMission();
         }
@@ -105,6 +124,7 @@ namespace LeftHandSward
         public override void OnRemoveBehavior()
         {
             LeftHandSwardLog.Info("Mission", "OnRemoveBehavior cleanup");
+            RightHandHitChainRuntime.Cleanup();
             LeftHandAttackRuntime.Cleanup();
             base.OnRemoveBehavior();
         }
